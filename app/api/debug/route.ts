@@ -1,30 +1,28 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
 
 export async function GET() {
-  const kvUrl = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL ?? null;
-  const kvToken = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN ?? null;
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL ?? null;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN ?? null;
   const adminUser = process.env.ADMIN_USERNAME ?? null;
   const adminPass = process.env.ADMIN_PASSWORD ? "set" : null;
 
-  // Try a real KV ping
   let kvStatus = "not configured";
-  if (kvUrl && kvToken) {
+  if (url && token) {
     try {
-      const res = await fetch(`${kvUrl}/ping`, {
-        headers: { Authorization: `Bearer ${kvToken}` },
-      });
-      const text = await res.text();
-      kvStatus = res.ok ? `ok (${text.trim()})` : `error ${res.status}: ${text}`;
+      const redis = new Redis({ url, token });
+      const pong = await redis.ping();
+      kvStatus = `ok (${pong})`;
     } catch (e) {
-      kvStatus = `fetch error: ${String(e)}`;
+      kvStatus = `error: ${String(e)}`;
     }
   }
 
   return NextResponse.json({
-    kvUrl: kvUrl ? kvUrl.slice(0, 40) + "…" : "MISSING",
-    kvToken: kvToken ? "set (" + kvToken.slice(0, 8) + "…)" : "MISSING",
+    kvUrl: url ? url.slice(0, 50) + "…" : "MISSING",
+    kvToken: token ? "set (" + token.slice(0, 8) + "…)" : "MISSING",
     adminUser: adminUser ?? "MISSING",
     adminPass: adminPass ?? "MISSING",
     kvStatus,

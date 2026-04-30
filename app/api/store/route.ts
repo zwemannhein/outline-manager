@@ -1,18 +1,18 @@
 /**
- * /api/store — Synced admin data store backed by Vercel KV.
+ * /api/store — Synced admin data store backed by Upstash Redis.
  *
- * GET  /api/store          → returns { servers, keyMeta }
- * POST /api/store          → saves   { servers, keyMeta }
+ * GET  /api/store  → returns { servers, keyMeta }
+ * POST /api/store  → saves   { servers, keyMeta }
  *
- * Both require the Authorization header:
- *   Authorization: Bearer <base64(username:password)>
- *
- * Falls back gracefully when KV is not configured (local dev without KV).
+ * Authorization: Bearer <base64(username:password)>
  */
 
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
+
+const KV_KEY = "outline_admin_data";
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -25,45 +25,22 @@ function checkAuth(req: NextRequest): boolean {
 
   try {
     const decoded = Buffer.from(auth.slice(7), "base64").toString("utf-8");
-    const [user, ...passParts] = decoded.split(":");
-    const pass = passParts.join(":");
+    const colonIdx = decoded.indexOf(":");
+    const user = decoded.slice(0, colonIdx);
+    const pass = decoded.slice(colonIdx + 1);
     return user === expectedUser && pass === expectedPass;
   } catch {
     return false;
   }
 }
 
-// ── KV helpers ────────────────────────────────────────────────────────────────
+// ── Redis client (lazy — only created when env vars are present) ──────────────
 
-const KV_KEY = "outline_admin_data";
-
-async function kvGet(): Promise<unknown> {
-  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+function getRedis(): Redis | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
   if (!url || !token) return null;
-
-  const res = await fetch(`${url}/get/${KV_KEY}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) return null;
-  const json = await res.json() as { result?: string };
-  if (!json.result) return null;
-  return JSON.parse(json.result);
-}
-
-async function kvSet(data: unknown): Promise<void> {
-  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return;
-
-  await fetch(`${url}/set/${KV_KEY}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ value: JSON.stringify(data) }),
-  });
+  return new Redis({ url, token });
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -73,8 +50,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const redis = getRedis();
+  if (!redis) {
+    // No KV configured — return empty (client falls back to localStorage)
+    return NextResponse.json({ servers: [], keyMeta: {} });
+  }
+
   try {
-    const data = await kvGet();
+    const data = await redis.get(KV_KEY);
     return NextResponse.json(data ?? { servers: [], keyMeta: {} });
   } catch (e) {
     console.error("[store] GET error:", e);
@@ -87,9 +70,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const redis = getRedis();
+  if (!redis) {
+    return NextResponse.json({ ok: true, note: "KV not configured, data not persisted" });
+  }
+
   try {
     const body = await req.json();
-    await kvSet(body);
+    await redis.set(KV_KEY, body);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[store] POST error:", e);
