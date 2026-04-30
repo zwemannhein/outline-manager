@@ -5,10 +5,10 @@ import { ServerSidebar } from "./ServerSidebar";
 import { ServerDashboard } from "./ServerDashboard";
 import { AddServerDialog } from "./Dialogs";
 import { addServer, loadServers, removeServer, updateServerName } from "@/lib/storage";
-import { fetchAdminData, saveLocalData } from "@/lib/sync";
+import { fetchAdminData, saveLocalData, loadLocalData } from "@/lib/sync";
 import { uuid } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Menu, X } from "lucide-react";
+import { LogOut, Menu, X, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { OutlineServer } from "@/lib/types";
 
@@ -25,13 +25,26 @@ export function AdminView({ onLogout }: AdminViewProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syncing, setSyncing] = useState(true);
 
-  // On mount: fetch from KV (syncs across devices), fall back to localStorage
+  // On mount: always fetch from KV first — this is what syncs across devices
   useEffect(() => {
-    fetchAdminData().then((data) => {
-      saveLocalData(data);
-      setServers(data.servers);
-      if (data.servers.length > 0) setActiveId(data.servers[0].id);
-    }).finally(() => setSyncing(false));
+    setSyncing(true);
+    fetchAdminData()
+      .then((data) => {
+        saveLocalData(data);
+        setServers(data.servers);
+        // Keep the previously active server if it still exists, else pick first
+        setActiveId((prev) => {
+          if (prev && data.servers.find((s) => s.id === prev)) return prev;
+          return data.servers[0]?.id ?? "";
+        });
+      })
+      .catch(() => {
+        // KV failed — load from localStorage
+        const local = loadLocalData();
+        setServers(local.servers);
+        setActiveId(local.servers[0]?.id ?? "");
+      })
+      .finally(() => setSyncing(false));
   }, []);
 
   const handleOnlineChange = useCallback((id: string, online: boolean) => {
@@ -73,6 +86,18 @@ export function AdminView({ onLogout }: AdminViewProps) {
   }
 
   const activeServer = servers.find((s) => s.id === activeId) ?? null;
+
+  // Show a brief loading screen while fetching from KV
+  if (syncing) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center space-y-3 text-muted-foreground">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto" />
+          <p className="text-sm">Syncing server list…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
