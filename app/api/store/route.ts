@@ -38,8 +38,8 @@ function checkAuth(req: NextRequest): boolean {
 const KV_KEY = "outline_admin_data";
 
 async function kvGet(): Promise<unknown> {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
 
   const res = await fetch(`${url}/get/${KV_KEY}`, {
@@ -52,9 +52,9 @@ async function kvGet(): Promise<unknown> {
 }
 
 async function kvSet(data: unknown): Promise<void> {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return; // silently skip if KV not configured
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return;
 
   await fetch(`${url}/set/${KV_KEY}`, {
     method: "POST",
