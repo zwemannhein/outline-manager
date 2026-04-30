@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { EntryGate } from "@/components/EntryGate";
 import { AdminView } from "@/components/admin/AdminView";
 import { UserView } from "@/components/user/UserView";
-import { setAdminCreds } from "@/lib/sync";
+import { setAdminCreds, clearAdminCreds } from "@/lib/sync";
 
 type AppState =
   | { role: "none" }
@@ -44,6 +44,7 @@ export default function Home() {
   function transition(next: AppState) {
     setState(next);
     saveSession(next);
+    if (next.role === "none") clearAdminCreds();
   }
 
   function handleAdminUnlock(username: string, password: string) {
