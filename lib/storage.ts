@@ -1,10 +1,40 @@
 /**
- * Storage helpers — thin wrappers that read/write through the sync layer.
- * All sync operations are async; localStorage is used as a synchronous cache.
+ * Storage helpers — read/write through the sync layer.
+ * localStorage is used as a synchronous cache.
  */
 
 import type { OutlineServer, KeyMeta } from "./types";
-import { loadLocalData, saveLocalData, pushAdminData } from "./sync";
+import { loadLocalData, saveLocalData, pushAdminData, AdminData } from "./sync";
+
+// ── Migration: move old localStorage keys into the new unified format ─────────
+// Old keys: "outline_servers", "outline_key_meta"
+// New key:  "outline_admin_data_v2"
+
+function migrateIfNeeded(): void {
+  if (typeof window === "undefined") return;
+  if (localStorage.getItem("outline_admin_data_v2")) return; // already migrated
+
+  try {
+    const oldServers = localStorage.getItem("outline_servers");
+    const oldMeta = localStorage.getItem("outline_key_meta");
+    if (oldServers || oldMeta) {
+      const data: AdminData = {
+        servers: oldServers ? JSON.parse(oldServers) : [],
+        keyMeta: oldMeta ? JSON.parse(oldMeta) : {},
+      };
+      saveLocalData(data);
+      // Push migrated data to KV
+      pushAdminData(data).catch(() => {});
+    }
+  } catch {
+    // ignore migration errors
+  }
+}
+
+// Run migration once on module load (client-side only)
+if (typeof window !== "undefined") {
+  migrateIfNeeded();
+}
 
 // ─── Servers ──────────────────────────────────────────────────────────────────
 
@@ -16,7 +46,6 @@ export function saveServers(servers: OutlineServer[]): void {
   const data = loadLocalData();
   data.servers = servers;
   saveLocalData(data);
-  // Fire-and-forget push to KV
   pushAdminData(data).catch(() => {});
 }
 

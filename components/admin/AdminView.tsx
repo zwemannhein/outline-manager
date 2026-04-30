@@ -5,7 +5,7 @@ import { ServerSidebar } from "./ServerSidebar";
 import { ServerDashboard } from "./ServerDashboard";
 import { AddServerDialog } from "./Dialogs";
 import { addServer, loadServers, removeServer, updateServerName } from "@/lib/storage";
-import { fetchAdminData, saveLocalData, loadLocalData } from "@/lib/sync";
+import { fetchAdminData, saveLocalData, loadLocalData, pushAdminData } from "@/lib/sync";
 import { uuid } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { LogOut, Menu, X, RefreshCw } from "lucide-react";
@@ -29,17 +29,24 @@ export function AdminView({ onLogout }: AdminViewProps) {
   useEffect(() => {
     setSyncing(true);
     fetchAdminData()
-      .then((data) => {
+      .then((kvData) => {
+        let data = kvData;
+        // If KV returned empty but we have local data, push local up to KV
+        if (data.servers.length === 0) {
+          const local = loadLocalData();
+          if (local.servers.length > 0) {
+            pushAdminData(local).catch(() => {});
+            data = local;
+          }
+        }
         saveLocalData(data);
         setServers(data.servers);
-        // Keep the previously active server if it still exists, else pick first
         setActiveId((prev) => {
           if (prev && data.servers.find((s) => s.id === prev)) return prev;
           return data.servers[0]?.id ?? "";
         });
       })
       .catch(() => {
-        // KV failed — load from localStorage
         const local = loadLocalData();
         setServers(local.servers);
         setActiveId(local.servers[0]?.id ?? "");
