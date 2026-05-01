@@ -8,16 +8,22 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { decodeSsUrl, detectInputKind } from "@/lib/ss-decoder";
-import { loadServers, getKeyMeta } from "@/lib/storage";
-import { listAccessKeys, getTransferMetrics } from "@/lib/outline-client";
 import { formatBytes, clamp } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import type { AccessKey, OutlineServer } from "@/lib/types";
 
 interface UserViewProps {
   ssUrl: string;
   onLogout: () => void;
   onSwitchKey: (newUrl: string) => void;
+}
+
+interface KeyStatus {
+  serverName: string;
+  keyName: string | null;
+  keyId: string;
+  bytesUsed: number;
+  dataLimit: number | null;
+  expiryDate: string | null;
 }
 
 function formatDate(iso: string): string {
@@ -36,10 +42,7 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
     catch { return null; }
   }, [ssUrl]);
 
-  const [keyData, setKeyData]       = useState<AccessKey | null>(null);
-  const [bytesUsed, setBytesUsed]   = useState<number>(0);
-  const [expiryDate, setExpiryDate] = useState<string | null>(null);
-  const [serverName, setServerName] = useState("");
+  const [keyStatus, setKeyStatus]   = useState<KeyStatus | null>(null);
   const [status, setStatus]         = useState<"idle" | "loading" | "ok" | "error" | "no-server">("idle");
   const [errMsg, setErrMsg]         = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -64,38 +67,37 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
     onSwitchKey(trimmed);
   }
 
-  // ── Core fetch ────────────────────────────────────────────────────────────
-  const fetchWithServer = useCallback(async (
-    server: Pick<OutlineServer, "id" | "name" | "apiUrl" | "certSha256">,
-    isRefresh: boolean
-  ) => {
-    if (!decoded) return;
+  // ── Load via public API — no user credentials needed ─────────────────────
+  const load = useCallback(async (isRefresh = false) => {
+    if (!decoded) { setStatus("no-server"); return; }
     if (isRefresh) setRefreshing(true);
     else setStatus("loading");
 
     try {
-      setServerName(server.name);
-      const [allKeys, metrics] = await Promise.all([
-        listAccessKeys(server.apiUrl, server.certSha256),
-        getTransferMetrics(server.apiUrl, server.certSha256),
-      ]);
+      const res = await fetch("/api/key-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ssHost: decoded.host,
+          keyId: decoded.keyId ?? undefined,
+          password: decoded.password,
+        }),
+      });
 
-      const found = allKeys.find(
-        (k) =>
-          (decoded.keyId && k.id === decoded.keyId) ||
-          k.accessUrl === decoded.raw ||
-          k.accessUrl.includes(decoded.password)
-      );
+      const data = await res.json() as KeyStatus & { error?: string };
 
-      if (!found) {
-        setStatus("error");
-        setErrMsg("Key not found on this server — it may have been deleted.");
+      if (!res.ok) {
+        if (res.status === 404 && data.error?.includes("not found")) {
+          setStatus("no-server");
+          setErrMsg(data.error);
+        } else {
+          setStatus("error");
+          setErrMsg(data.error ?? `HTTP ${res.status}`);
+        }
         return;
       }
 
-      setKeyData(found);
-      setBytesUsed(metrics.bytesTransferredByUserId[found.id] ?? 0);
-      setExpiryDate(getKeyMeta(server.id, found.id).expiryDate);
+      setKeyStatus(data);
       setStatus("ok");
     } catch (e) {
       setStatus("error");
@@ -105,38 +107,15 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
     }
   }, [decoded]);
 
-  const load = useCallback(async (isRefresh = false) => {
-    if (!decoded) { setStatus("no-server"); return; }
-
-    // 1. Try saved servers first
-    const servers = loadServers();
-    const matched = servers.find((s) => {
-      try { return new URL(s.apiUrl).hostname === decoded.host; }
-      catch { return false; }
-    });
-    if (matched) { await fetchWithServer(matched, isRefresh); return; }
-
-    // 2. Use embedded credentials if admin used the Share button
-    if (decoded.embeddedApiUrl && decoded.embeddedCertSha256) {
-      await fetchWithServer(
-        { id: "embedded", name: decoded.host, apiUrl: decoded.embeddedApiUrl, certSha256: decoded.embeddedCertSha256 },
-        isRefresh
-      );
-      return;
-    }
-
-    // 3. No credentials available — tell user to ask admin
-    setStatus("no-server");
-    setRefreshing(false);
-  }, [decoded, fetchWithServer]);
-
   React.useEffect(() => { load(false); }, [load]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const dataLimit  = keyData?.dataLimit?.bytes ?? keyData?.limit?.bytes ?? null;
+  const dataLimit  = keyStatus?.dataLimit ?? null;
+  const bytesUsed  = keyStatus?.bytesUsed ?? 0;
   const remaining  = dataLimit !== null ? Math.max(0, dataLimit - bytesUsed) : null;
   const pct        = dataLimit ? clamp((bytesUsed / dataLimit) * 100, 0, 100) : 0;
   const overLimit  = dataLimit !== null && bytesUsed >= dataLimit;
+  const expiryDate = keyStatus?.expiryDate ?? null;
   const days       = expiryDate ? daysLeft(expiryDate) : null;
   const isExpired  = days !== null && days <= 0;
   const soonExpiry = days !== null && days > 0 && days <= 5;
@@ -185,7 +164,8 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
           <form onSubmit={handleSwitchSubmit} className="max-w-sm mx-auto space-y-2">
             <div className="flex items-center justify-between mb-1">
               <p className="text-sm font-medium">Check another key</p>
-              <button type="button" onClick={() => { setShowSwitch(false); setSwitchValue(""); setSwitchError(""); }}
+              <button type="button"
+                onClick={() => { setShowSwitch(false); setSwitchValue(""); setSwitchError(""); }}
                 className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
@@ -221,16 +201,14 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
             </div>
           )}
 
-          {/* No server — ask admin to share properly */}
+          {/* Server not found in admin's list */}
           {status === "no-server" && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-5 space-y-2">
               <p className="font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" /> Key not linked to a server
+                <AlertTriangle className="w-4 h-4 shrink-0" /> Server not configured
               </p>
               <p className="text-sm text-amber-700/80 dark:text-amber-300/80">
-                Ask your admin to share your key using the{" "}
-                <strong>Share</strong> button (🔗) in the admin dashboard.
-                That link includes everything needed to load your details automatically.
+                {errMsg || `The server for this key (${decoded.host}) hasn't been added to the admin dashboard yet. Ask your admin to add it.`}
               </p>
             </div>
           )}
@@ -249,7 +227,7 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
           )}
 
           {/* Main card */}
-          {status === "ok" && keyData && (
+          {status === "ok" && keyStatus && (
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               {/* Status strip */}
               <div className={`px-5 py-3 flex items-center gap-3 ${
@@ -275,7 +253,7 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
                 {/* Server */}
                 <div className="space-y-0.5">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Server</p>
-                  <p className="text-lg font-bold leading-tight">{serverName}</p>
+                  <p className="text-lg font-bold leading-tight">{keyStatus.serverName}</p>
                   <p className="text-sm text-muted-foreground">{decoded.host}</p>
                 </div>
 
@@ -285,7 +263,7 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
                 <div className="space-y-0.5">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Key Name</p>
                   <p className="text-base font-semibold">
-                    {keyData.name || <span className="italic text-muted-foreground">Unnamed</span>}
+                    {keyStatus.keyName || <span className="italic text-muted-foreground">Unnamed</span>}
                   </p>
                 </div>
 
