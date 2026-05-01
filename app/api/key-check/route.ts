@@ -142,14 +142,32 @@ export async function POST(req: NextRequest) {
       ),
     ]);
 
-    // Match key by ID or password
-    const found = keysRes.accessKeys.find(
-      (k) => (keyId && k.id === keyId) || (password && k.accessUrl.includes(password))
-    );
+    // Match key by ID (most reliable), then by password (decoded comparison), then by port
+    const found = keysRes.accessKeys.find((k) => {
+      // 1. Match by key ID from ss:// fragment (e.g. #key-3 → id "3")
+      if (keyId && k.id === keyId) return true;
+
+      // 2. Match by password — compare directly
+      if (password && k.password === password) return true;
+
+      // 3. Match by password contained in accessUrl (handles base64 encoded variants)
+      if (password && k.accessUrl.includes(password)) return true;
+
+      return false;
+    });
 
     if (!found) {
+      // Return debug info to help diagnose matching issues
       return NextResponse.json(
-        { error: "Key not found on this server. It may have been deleted." },
+        {
+          error: "Key not found on this server. It may have been deleted.",
+          debug: {
+            searchedKeyId: keyId ?? null,
+            searchedPassword: password ? password.slice(0, 8) + "…" : null,
+            totalKeys: keysRes.accessKeys.length,
+            keyIds: keysRes.accessKeys.map((k) => k.id),
+          },
+        },
         { status: 404 }
       );
     }
