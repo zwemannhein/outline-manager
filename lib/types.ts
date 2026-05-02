@@ -79,7 +79,9 @@ export interface Order {
   name: string;
   kpayRef: string;
   plan: Plan;
-  customDataLimitGB?: number | null; // only for custom plan
+  customDataLimitGB?: number | null; // null = unlimited
+  customMonths?: number | null;
+  customDevices?: string | null;
   status: OrderStatus;
   serverId: string | null;
   keyId: string | null;

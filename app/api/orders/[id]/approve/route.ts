@@ -173,11 +173,10 @@ export async function POST(
     const MMK_PER_GB = 50;
     let limitBytes: number | null = null;
     if (order.plan === "plan_b") {
-      limitBytes = 100 * 1024 ** 3; // 100 GB
+      limitBytes = 100 * 1024 ** 3;
     } else if (order.plan === "custom" && order.customDataLimitGB) {
       limitBytes = order.customDataLimitGB * 1024 ** 3;
     }
-    // plan_a = unlimited, no limit set
 
     if (limitBytes !== null) {
       await outlinePut(server.apiUrl, server.certSha256, `/access-keys/${key.id}/data-limit`, {
@@ -185,7 +184,27 @@ export async function POST(
       });
     }
 
-    // 4. Update order in Redis
+    // 4. Calculate expiry date based on duration
+    let expiryDate: string | null = null;
+    const months = order.customMonths ?? 1;
+    const expiry = new Date();
+    expiry.setMonth(expiry.getMonth() + months);
+    expiry.setHours(23, 59, 59, 999);
+    expiryDate = expiry.toISOString();
+
+    // 5. Save expiry to keyMeta in Redis
+    const adminData = (await redis.get(ADMIN_DATA_KEY)) as {
+      servers: Array<{ id: string; name: string; apiUrl: string; certSha256: string }>;
+      keyMeta?: Record<string, { expiryDate: string | null }>;
+    } | null;
+
+    if (adminData && expiryDate) {
+      const keyMeta = adminData.keyMeta ?? {};
+      keyMeta[`${server.id}:${key.id}`] = { expiryDate };
+      await redis.set(ADMIN_DATA_KEY, { ...adminData, keyMeta });
+    }
+
+    // 6. Update order in Redis
     orders[orderIdx] = {
       ...order,
       status: "approved",

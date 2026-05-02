@@ -3,22 +3,24 @@
 import React, { useState } from "react";
 import {
   Smartphone, Wifi, Sliders, CheckCircle2,
-  Copy, Check, Clock, XCircle,
+  Copy, Check, Clock, XCircle, Database,
+  Users, CalendarDays, Infinity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
-// ── Pricing constants (based on your rates) ───────────────────────────────────
-const MMK_PER_GB = 50;           // 100 GB = 5,000 MMK → 50 MMK/GB
-const UNLIMITED_PRICE = 15000;   // unlimited data = 15,000 MMK
+// ── Pricing ───────────────────────────────────────────────────────────────────
+const MMK_PER_GB    = 50;       // per GB per month
+const UNLIMITED_PRICE = 15000;  // unlimited data per month
 
-// Custom plan GB options for the slider
 const GB_OPTIONS = [10, 20, 30, 50, 75, 100, 150, 200, 300, 500];
+const MONTH_OPTIONS = [1, 2, 3, 6, 12];
+const DEVICE_OPTIONS = ["1", "2", "3", "5", "Unlimited"];
 
-function calcCustomPrice(gb: number): number {
-  return gb * MMK_PER_GB;
+function calcDataPrice(gb: number | null): number {
+  return gb === null ? UNLIMITED_PRICE : gb * MMK_PER_GB;
 }
 
 function formatMMK(n: number): string {
@@ -30,17 +32,15 @@ const FIXED_PLANS = [
   {
     id: "plan_a",
     label: "Plan A",
-    description: "1 Device / Unlimited Data",
+    description: "1 Device / Unlimited Data / 1 Month",
     price: formatMMK(UNLIMITED_PRICE),
-    dataLimitGB: null as number | null,
     icon: Smartphone,
   },
   {
     id: "plan_b",
     label: "Plan B",
-    description: "Unlimited Devices / 100 GB",
+    description: "Unlimited Devices / 100 GB / 1 Month",
     price: formatMMK(100 * MMK_PER_GB),
-    dataLimitGB: 100,
     icon: Wifi,
   },
 ];
@@ -68,24 +68,93 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// ── Slider row ────────────────────────────────────────────────────────────────
+function SliderRow<T extends string | number>({
+  icon: Icon,
+  label,
+  options,
+  valueIdx,
+  onChange,
+  formatValue,
+}: {
+  icon: React.ElementType;
+  label: string;
+  options: T[];
+  valueIdx: number;
+  onChange: (i: number) => void;
+  formatValue: (v: T) => string;
+}) {
+  return (
+    <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Icon className="w-3.5 h-3.5" />
+          {label}
+        </div>
+        <span className="text-sm font-bold text-foreground">
+          {formatValue(options[valueIdx])}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={options.length - 1}
+        value={valueIdx}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-primary cursor-pointer h-1.5"
+      />
+      <div className="flex justify-between text-xs text-muted-foreground">
+        {options.map((o, i) => (
+          <span key={String(o)} className={cn(i === valueIdx ? "text-primary font-semibold" : "")}>
+            {formatValue(o)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export function OrderForm({ onAdminClick }: OrderFormProps) {
   const [name, setName] = useState("");
   const [kpayRef, setKpayRef] = useState("");
   const [planChoice, setPlanChoice] = useState<PlanChoice>("plan_a");
-  const [customGbIdx, setCustomGbIdx] = useState(4); // default 75 GB
+
+  // Custom plan state
+  const [dataUnlimited, setDataUnlimited] = useState(false);
+  const [gbIdx, setGbIdx] = useState(3);          // default 50 GB
+  const [monthIdx, setMonthIdx] = useState(0);    // default 1 month
+  const [deviceIdx, setDeviceIdx] = useState(0);  // default 1 device
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState<Step>("form");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const customGb = GB_OPTIONS[customGbIdx];
-  const customPrice = calcCustomPrice(customGb);
+  // Derived custom values
+  const customGb     = dataUnlimited ? null : GB_OPTIONS[gbIdx];
+  const customMonths = MONTH_OPTIONS[monthIdx];
+  const customDevices = DEVICE_OPTIONS[deviceIdx];
+  const monthlyPrice = calcDataPrice(customGb);
+  const totalPrice   = monthlyPrice * customMonths;
 
-  // What gets sent to the API
-  function getPlanPayload(): { plan: string; customDataLimitGB?: number } {
-    if (planChoice === "custom") return { plan: "custom", customDataLimitGB: customGb };
+  function getPlanPayload() {
+    if (planChoice === "custom") {
+      return {
+        plan: "custom",
+        customDataLimitGB: customGb,
+        customMonths,
+        customDevices,
+      };
+    }
     return { plan: planChoice };
+  }
+
+  function getSubmitPrice(): string {
+    if (planChoice === "plan_a") return formatMMK(UNLIMITED_PRICE);
+    if (planChoice === "plan_b") return formatMMK(100 * MMK_PER_GB);
+    return formatMMK(totalPrice);
   }
 
   function validate(): boolean {
@@ -104,11 +173,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          kpayRef: kpayRef.trim(),
-          ...getPlanPayload(),
-        }),
+        body: JSON.stringify({ name: name.trim(), kpayRef: kpayRef.trim(), ...getPlanPayload() }),
       });
       const data = await res.json() as { id?: string; error?: string };
       if (!res.ok) { setErrors({ form: data.error ?? "Submission failed" }); return; }
@@ -141,7 +206,8 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
 
   function resetForm() {
     setStep("form"); setName(""); setKpayRef("");
-    setPlanChoice("plan_a"); setCustomGbIdx(4);
+    setPlanChoice("plan_a"); setGbIdx(3); setMonthIdx(0);
+    setDeviceIdx(0); setDataUnlimited(false);
     setOrderId(null); setAccessUrl(null); setErrors({});
   }
 
@@ -282,7 +348,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
             </button>
           ))}
 
-          {/* Custom plan */}
+          {/* ── Custom plan ── */}
           <button
             type="button"
             onClick={() => setPlanChoice("custom")}
@@ -291,63 +357,116 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
               planChoice === "custom" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
             )}
           >
+            {/* Header row */}
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-primary shrink-0" />
                 <div>
                   <p className="font-semibold text-sm">Custom Plan</p>
-                  <p className="text-xs text-muted-foreground">Choose your own data limit</p>
+                  <p className="text-xs text-muted-foreground">Build your own</p>
                 </div>
               </div>
               <div className="text-right shrink-0">
                 <p className="font-bold text-sm text-primary">
-                  {planChoice === "custom" ? formatMMK(customPrice) : `${MMK_PER_GB} MMK/GB`}
+                  {planChoice === "custom" ? formatMMK(totalPrice) : `${MMK_PER_GB} MMK/GB`}
                 </p>
-                <p className="text-xs text-muted-foreground">/ month</p>
+                <p className="text-xs text-muted-foreground">
+                  {planChoice === "custom" && customMonths > 1 ? `${customMonths} months` : "/ month"}
+                </p>
               </div>
             </div>
 
-            {/* Slider — only shown when custom is selected */}
+            {/* Sliders — only when selected */}
             {planChoice === "custom" && (
-              <div
-                className="mt-4 space-y-3"
-                onClick={(e) => e.stopPropagation()} // prevent deselecting when clicking slider
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Data limit</span>
-                  <span className="font-bold text-base text-foreground">{customGb} GB</span>
+              <div className="mt-5 space-y-5" onClick={(e) => e.stopPropagation()}>
+
+                {/* ── Data ── */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Database className="w-3.5 h-3.5" /> Data
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Unlimited toggle */}
+                      <button
+                        type="button"
+                        onClick={() => setDataUnlimited((v) => !v)}
+                        className={cn(
+                          "flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors",
+                          dataUnlimited
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:border-primary/40"
+                        )}
+                      >
+                        <Infinity className="w-3 h-3" />
+                        Unlimited
+                      </button>
+                      {!dataUnlimited && (
+                        <span className="text-sm font-bold text-foreground">{GB_OPTIONS[gbIdx]} GB</span>
+                      )}
+                      {dataUnlimited && (
+                        <span className="text-sm font-bold text-primary">∞</span>
+                      )}
+                    </div>
+                  </div>
+                  {!dataUnlimited && (
+                    <>
+                      <input
+                        type="range" min={0} max={GB_OPTIONS.length - 1}
+                        value={gbIdx} onChange={(e) => setGbIdx(Number(e.target.value))}
+                        className="w-full accent-primary cursor-pointer h-1.5"
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        {GB_OPTIONS.map((gb, i) => (
+                          <span key={gb} className={cn(i === gbIdx ? "text-primary font-semibold" : "")}>
+                            {gb >= 100 ? gb : gb}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <input
-                  type="range"
-                  min={0}
-                  max={GB_OPTIONS.length - 1}
-                  value={customGbIdx}
-                  onChange={(e) => setCustomGbIdx(Number(e.target.value))}
-                  className="w-full accent-primary cursor-pointer"
+                {/* ── Devices ── */}
+                <SliderRow
+                  icon={Users}
+                  label="Devices"
+                  options={DEVICE_OPTIONS}
+                  valueIdx={deviceIdx}
+                  onChange={setDeviceIdx}
+                  formatValue={(v) => v === "Unlimited" ? "∞" : `${v}`}
                 />
 
-                {/* Tick labels */}
-                <div className="flex justify-between text-xs text-muted-foreground px-0.5">
-                  {GB_OPTIONS.map((gb, i) => (
-                    <span
-                      key={gb}
-                      className={cn(
-                        "transition-colors",
-                        i === customGbIdx ? "text-primary font-semibold" : ""
-                      )}
-                    >
-                      {gb >= 100 ? `${gb / 1}` : gb}
-                    </span>
-                  ))}
-                </div>
+                {/* ── Duration ── */}
+                <SliderRow
+                  icon={CalendarDays}
+                  label="Duration"
+                  options={MONTH_OPTIONS}
+                  valueIdx={monthIdx}
+                  onChange={setMonthIdx}
+                  formatValue={(v) => `${v}mo`}
+                />
 
-                {/* Price breakdown */}
-                <div className="rounded-lg bg-muted/60 px-3 py-2.5 flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">
-                    {customGb} GB × {MMK_PER_GB} MMK
+                {/* ── Price breakdown ── */}
+                <div className="rounded-lg bg-muted/60 px-3 py-3 space-y-1.5">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>
+                      {dataUnlimited ? "Unlimited data" : `${GB_OPTIONS[gbIdx]} GB`}
+                      {" × "}{MMK_PER_GB} MMK
+                      {dataUnlimited ? " (flat)" : "/GB"}
+                    </span>
+                    <span>{formatMMK(monthlyPrice)}/mo</span>
                   </div>
-                  <div className="font-bold text-primary">{formatMMK(customPrice)}</div>
+                  {customMonths > 1 && (
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>× {customMonths} months</span>
+                      <span>{formatMMK(totalPrice)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm font-bold border-t pt-1.5 mt-1">
+                    <span>Total</span>
+                    <span className="text-primary">{formatMMK(totalPrice)}</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -359,11 +478,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
       {errors.form && <p className="text-sm text-destructive">{errors.form}</p>}
 
       <Button type="submit" className="w-full" disabled={submitting}>
-        {submitting ? "Submitting…" : `Submit Order — ${
-          planChoice === "plan_a" ? formatMMK(UNLIMITED_PRICE)
-          : planChoice === "plan_b" ? formatMMK(100 * MMK_PER_GB)
-          : formatMMK(customPrice)
-        }`}
+        {submitting ? "Submitting…" : `Submit Order — ${getSubmitPrice()}`}
       </Button>
 
       <div className="text-center pt-1">

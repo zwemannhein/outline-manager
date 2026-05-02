@@ -60,11 +60,11 @@ export async function GET(req: NextRequest) {
 
 // ── POST — public ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  let body: { name?: string; kpayRef?: string; plan?: Plan; customDataLimitGB?: number };
+  let body: { name?: string; kpayRef?: string; plan?: Plan; customDataLimitGB?: number; customMonths?: number; customDevices?: string };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const { name, kpayRef, plan, customDataLimitGB } = body;
+  const { name, kpayRef, plan, customDataLimitGB, customMonths, customDevices } = body;
 
   if (!name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 });
   if (!kpayRef || !/^\d{6}$/.test(kpayRef.trim())) {
@@ -80,6 +80,8 @@ export async function POST(req: NextRequest) {
     kpayRef: kpayRef.trim(),
     plan,
     customDataLimitGB: plan === "custom" ? (customDataLimitGB ?? null) : null,
+    customMonths: plan === "custom" ? (customMonths ?? 1) : null,
+    customDevices: plan === "custom" ? (customDevices ?? null) : null,
     status: "pending",
     serverId: null,
     keyId: null,
