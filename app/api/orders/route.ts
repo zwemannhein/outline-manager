@@ -60,17 +60,17 @@ export async function GET(req: NextRequest) {
 
 // ── POST — public ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  let body: { name?: string; kpayRef?: string; plan?: Plan };
+  let body: { name?: string; kpayRef?: string; plan?: Plan; customDataLimitGB?: number };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const { name, kpayRef, plan } = body;
+  const { name, kpayRef, plan, customDataLimitGB } = body;
 
   if (!name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 });
   if (!kpayRef || !/^\d{6}$/.test(kpayRef.trim())) {
     return NextResponse.json({ error: "KPay reference must be exactly 6 digits" }, { status: 400 });
   }
-  if (plan !== "plan_a" && plan !== "plan_b") {
+  if (plan !== "plan_a" && plan !== "plan_b" && plan !== "custom") {
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
   }
 
@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
     name: name.trim(),
     kpayRef: kpayRef.trim(),
     plan,
+    customDataLimitGB: plan === "custom" ? (customDataLimitGB ?? null) : null,
     status: "pending",
     serverId: null,
     keyId: null,

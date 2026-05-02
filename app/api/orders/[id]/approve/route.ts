@@ -169,8 +169,16 @@ export async function POST(
       name: order.name,
     });
 
-    // 3. Set data limit if plan requires it
-    const limitBytes = PLAN_LIMITS[order.plan];
+    // 3. Set data limit based on plan
+    const MMK_PER_GB = 50;
+    let limitBytes: number | null = null;
+    if (order.plan === "plan_b") {
+      limitBytes = 100 * 1024 ** 3; // 100 GB
+    } else if (order.plan === "custom" && order.customDataLimitGB) {
+      limitBytes = order.customDataLimitGB * 1024 ** 3;
+    }
+    // plan_a = unlimited, no limit set
+
     if (limitBytes !== null) {
       await outlinePut(server.apiUrl, server.certSha256, `/access-keys/${key.id}/data-limit`, {
         limit: { bytes: limitBytes },

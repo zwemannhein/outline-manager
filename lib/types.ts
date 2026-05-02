@@ -39,48 +39,52 @@ export interface KeyMeta {
 
 // ─── Phase 2: Orders ─────────────────────────────────────────────────────────
 
-export type Plan = "plan_a" | "plan_b";
+export type Plan = string; // dynamic plan IDs set by admin
 
 export interface PlanInfo {
-  id: Plan;
-  label: string;
-  description: string;
-  price: string;
-  dataLimit: number | null; // bytes, null = unlimited
-  devices: string;
+  id: string;
+  label: string;           // e.g. "Plan A"
+  description: string;     // e.g. "1 Device / Unlimited Data"
+  price: string;           // e.g. "15,000 MMK"
+  dataLimitGB: number | null; // null = unlimited, number = GB
+  devices: string;         // e.g. "1 device"
+  enabled: boolean;
 }
 
-export const PLANS: PlanInfo[] = [
+export const DEFAULT_PLANS: PlanInfo[] = [
   {
     id: "plan_a",
     label: "Plan A",
     description: "1 Device / Unlimited Data",
-    price: "15,000 MMK / month",
-    dataLimit: null,
+    price: "15,000 MMK",
+    dataLimitGB: null,
     devices: "1 device",
+    enabled: true,
   },
   {
     id: "plan_b",
     label: "Plan B",
     description: "Unlimited Devices / 100 GB Data",
-    price: "5,000 MMK / month",
-    dataLimit: 100 * 1024 ** 3, // 100 GB in bytes
+    price: "5,000 MMK",
+    dataLimitGB: 100,
     devices: "Unlimited devices",
+    enabled: true,
   },
 ];
 
 export type OrderStatus = "pending" | "approved" | "rejected";
 
 export interface Order {
-  id: string;           // uuid
-  name: string;         // customer name
-  kpayRef: string;      // last 6 digits of KPay slip
+  id: string;
+  name: string;
+  kpayRef: string;
   plan: Plan;
+  customDataLimitGB?: number | null; // only for custom plan
   status: OrderStatus;
-  serverId: string | null;  // which server the key was created on
-  keyId: string | null;     // Outline key ID after approval
-  accessUrl: string | null; // ss:// URL after approval
-  createdAt: number;        // Date.now()
+  serverId: string | null;
+  keyId: string | null;
+  accessUrl: string | null;
+  createdAt: number;
   approvedAt: number | null;
 }
 

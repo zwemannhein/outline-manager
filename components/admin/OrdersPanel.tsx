@@ -5,7 +5,7 @@ import { RefreshCw, CheckCircle2, XCircle, Clock, Copy, Check } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { PLANS } from "@/lib/types";
+import { DEFAULT_PLANS } from "@/lib/types";
 import type { Order } from "@/lib/types";
 
 interface OrdersPanelProps {
@@ -121,7 +121,11 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
             <Clock className="w-4 h-4" /> Pending Approval
           </h2>
           {pending.map((order) => {
-            const planInfo = PLANS.find((p) => p.id === order.plan);
+            const isCustom = order.plan === "custom";
+            const planLabel = isCustom ? "Custom" : (DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.label ?? order.plan);
+            const planDesc = isCustom
+              ? `${order.customDataLimitGB ?? "?"} GB / ${(order.customDataLimitGB ?? 0) * 50} MMK`
+              : DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.description ?? "";
             const isProcessing = processing === order.id;
             return (
               <div key={order.id} className="rounded-xl border bg-card p-4 space-y-3">
@@ -135,9 +139,8 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                   <Badge variant="warning" className="shrink-0">Pending</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="text-xs">{planInfo?.label}</Badge>
-                  <span className="text-xs text-muted-foreground">{planInfo?.description}</span>
-                  <span className="text-xs font-medium text-primary ml-auto">{planInfo?.price}</span>
+                  <Badge variant="secondary" className="text-xs">{planLabel}</Badge>
+                  <span className="text-xs text-muted-foreground">{planDesc}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {new Date(order.createdAt).toLocaleString()}
@@ -171,7 +174,11 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-muted-foreground">History</h2>
           {processed.map((order) => {
-            const planInfo = PLANS.find((p) => p.id === order.plan);
+            const isCustom = order.plan === "custom";
+            const planLabel = isCustom ? "Custom" : (DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.label ?? order.plan);
+            const planDesc = isCustom
+              ? `${order.customDataLimitGB ?? "?"} GB`
+              : DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.description ?? "";
             return (
               <div key={order.id} className="rounded-xl border bg-card p-4 space-y-2 opacity-80">
                 <div className="flex items-start justify-between gap-3">
@@ -186,8 +193,8 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="text-xs">{planInfo?.label}</Badge>
-                  <span className="text-xs text-muted-foreground">{planInfo?.description}</span>
+                  <Badge variant="secondary" className="text-xs">{planLabel}</Badge>
+                  <span className="text-xs text-muted-foreground">{planDesc}</span>
                 </div>
                 {order.accessUrl && (
                   <div className="flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
