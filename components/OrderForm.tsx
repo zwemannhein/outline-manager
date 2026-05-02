@@ -27,7 +27,53 @@ function formatMMK(n: number): string {
   return n.toLocaleString() + " MMK";
 }
 
-// ── Fixed plans ───────────────────────────────────────────────────────────────
+// ── KPay info box ─────────────────────────────────────────────────────────────
+const KPAY_NUMBER = "09666627107";
+const KPAY_NAME   = "Ni Ni Mar";
+
+function KPayInfo() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden mb-1">
+      {/* Header strip */}
+      <div className="bg-emerald-500 px-4 py-2 flex items-center gap-2">
+        <span className="text-white text-xs font-semibold uppercase tracking-wider">
+          KPay Payment Details
+        </span>
+      </div>
+      {/* Body */}
+      <div className="px-4 py-3 flex items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <p className="text-xs text-muted-foreground">Recipient Name</p>
+          <p className="font-semibold text-sm">{KPAY_NAME}</p>
+          <p className="text-xs text-muted-foreground mt-1.5">Phone Number</p>
+          <p className="font-bold text-lg tracking-widest">{KPAY_NUMBER}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(KPAY_NUMBER).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+          className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg border bg-muted/50 hover:bg-muted transition-colors shrink-0"
+          title="Copy KPay number"
+        >
+          {copied
+            ? <Check className="w-5 h-5 text-emerald-500" />
+            : <Copy className="w-5 h-5 text-muted-foreground" />}
+          <span className="text-xs text-muted-foreground">{copied ? "Copied!" : "Copy"}</span>
+        </button>
+      </div>
+      <div className="px-4 pb-3">
+        <p className="text-xs text-muted-foreground">
+          Send the exact amount, then enter the last 6 digits of your transaction slip below.
+        </p>
+      </div>
+    </div>
+  );
+}
 const FIXED_PLANS = [
   {
     id: "plan_a",
@@ -299,16 +345,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
       {/* KPay ref */}
       <div className="space-y-1.5">
         {/* KPay recipient info */}
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30 px-4 py-3 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Send KPay to</p>
-            <p className="text-base font-bold text-emerald-800 dark:text-emerald-200 tracking-wide">09666627107</p>
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">Ni Ni Mar</p>
-          </div>
-          <div className="shrink-0">
-            <span className="text-2xl">💚</span>
-          </div>
-        </div>
+        <KPayInfo />
 
         <Label htmlFor="kpay-ref">KPay Transaction Number</Label>
         <p className="text-xs text-muted-foreground">Enter the last 6 digits from your KPay slip</p>
