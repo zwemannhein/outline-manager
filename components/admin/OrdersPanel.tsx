@@ -96,7 +96,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
             {pending.length} pending · {processed.length} processed
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {servers.length > 1 && (
             <select
               value={selectedServer}
@@ -138,21 +138,21 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                   </div>
                   <Badge variant="warning" className="shrink-0">Pending</Badge>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="text-xs">{planLabel}</Badge>
                   <span className="text-xs text-muted-foreground">{planDesc}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {new Date(order.createdAt).toLocaleString()}
                 </p>
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
                   <Button
                     size="sm" className="flex-1"
                     onClick={() => handleApprove(order.id)}
                     disabled={isProcessing}
                   >
                     {isProcessing ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />}
-                    Approve
+                    Approve & Create Key
                   </Button>
                   <Button
                     size="sm" variant="outline" className="flex-1 text-destructive hover:text-destructive"
@@ -192,7 +192,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                     {order.status === "approved" ? "Approved" : "Rejected"}
                   </Badge>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="text-xs">{planLabel}</Badge>
                   <span className="text-xs text-muted-foreground">{planDesc}</span>
                 </div>

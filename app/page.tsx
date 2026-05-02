@@ -84,16 +84,16 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b bg-card px-4 py-4 flex items-center gap-2">
+      <header className="border-b bg-card px-4 py-3 flex items-center gap-2 sticky top-0 z-10">
         <Server className="w-5 h-5 text-primary" />
-        <span className="font-bold">Outline VPN</span>
+        <span className="font-bold text-sm sm:text-base">Outline VPN</span>
       </header>
 
-      <main className="flex-1 flex flex-col items-center px-4 py-8">
-        <div className="w-full max-w-md space-y-6">
+      <main className="flex-1 flex flex-col items-center px-4 py-6 sm:py-10">
+        <div className="w-full max-w-md space-y-5">
           {/* Title */}
           <div className="text-center space-y-1">
-            <h1 className="text-2xl font-bold">Get VPN Access</h1>
+            <h1 className="text-xl sm:text-2xl font-bold">Get VPN Access</h1>
             <p className="text-sm text-muted-foreground">
               Pay via KPay and get your key instantly after approval.
             </p>
@@ -178,7 +178,7 @@ function TabView({
               value={ssValue}
               onChange={(e) => { setSsValue(e.target.value); setSsError(""); }}
               placeholder={"Paste your access key:\nss://… or ssconf://…"}
-              rows={4}
+              rows={3}
               className={cn(
                 "w-full rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none",
                 "placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring",

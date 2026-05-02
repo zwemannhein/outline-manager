@@ -298,8 +298,20 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
 
       {/* KPay ref */}
       <div className="space-y-1.5">
+        {/* KPay recipient info */}
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30 px-4 py-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Send KPay to</p>
+            <p className="text-base font-bold text-emerald-800 dark:text-emerald-200 tracking-wide">09666627107</p>
+            <p className="text-xs text-emerald-600 dark:text-emerald-400">Ni Ni Mar</p>
+          </div>
+          <div className="shrink-0">
+            <span className="text-2xl">💚</span>
+          </div>
+        </div>
+
         <Label htmlFor="kpay-ref">KPay Transaction Number</Label>
-        <p className="text-xs text-muted-foreground">Last 6 digits of your KPay slip</p>
+        <p className="text-xs text-muted-foreground">Enter the last 6 digits from your KPay slip</p>
         <Input
           id="kpay-ref"
           value={kpayRef}
@@ -311,7 +323,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
           placeholder="123456"
           inputMode="numeric"
           maxLength={6}
-          className={cn("font-mono tracking-widest", errors.kpayRef ? "border-destructive" : "")}
+          className={cn("font-mono tracking-widest text-center text-lg h-12", errors.kpayRef ? "border-destructive" : "")}
         />
         {errors.kpayRef && <p className="text-xs text-destructive">{errors.kpayRef}</p>}
       </div>
