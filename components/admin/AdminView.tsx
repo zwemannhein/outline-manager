@@ -8,8 +8,9 @@ import { addServer, loadServers, removeServer, updateServerName } from "@/lib/st
 import { fetchAdminData, saveLocalData, loadLocalData, pushAdminData } from "@/lib/sync";
 import { uuid } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Menu, X, RefreshCw } from "lucide-react";
+import { LogOut, Menu, X, RefreshCw, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OrdersPanel } from "./OrdersPanel";
 import type { OutlineServer } from "@/lib/types";
 
 interface AdminViewProps {
@@ -24,6 +25,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syncing, setSyncing] = useState(true);
+  const [activeTab, setActiveTab] = useState<"servers" | "orders">("servers");
 
   // On mount: always fetch from KV first — this is what syncs across devices
   useEffect(() => {
@@ -94,6 +96,13 @@ export function AdminView({ onLogout }: AdminViewProps) {
 
   const activeServer = servers.find((s) => s.id === activeId) ?? null;
 
+  // Build auth header for API calls
+  const authHeader = (() => {
+    if (typeof window === "undefined") return "";
+    const stored = sessionStorage.getItem("outline_admin_creds");
+    return stored ? `Bearer ${stored}` : "";
+  })();
+
   // Show a brief loading screen while fetching from KV
   if (syncing) {
     return (
@@ -148,9 +157,30 @@ export function AdminView({ onLogout }: AdminViewProps) {
             >
               {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </Button>
-            <span className="font-semibold text-sm truncate max-w-[160px] sm:max-w-none">
-              {activeServer?.name ?? "Outline VPN Manager"}
-            </span>
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setActiveTab("servers")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === "servers"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Servers
+              </button>
+              <button
+                onClick={() => setActiveTab("orders")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                  activeTab === "orders"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                Orders
+              </button>
+            </div>
           </div>
           <Button variant="ghost" size="sm" onClick={onLogout}>
             <LogOut className="w-4 h-4 mr-1.5" />
@@ -158,8 +188,10 @@ export function AdminView({ onLogout }: AdminViewProps) {
           </Button>
         </header>
 
-        {/* Dashboard */}
-        {activeServer ? (
+        {/* Content */}
+        {activeTab === "orders" ? (
+          <OrdersPanel authHeader={authHeader} servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
+        ) : activeServer ? (
           <ServerDashboard
             key={activeServer.id}
             server={activeServer}

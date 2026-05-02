@@ -1,11 +1,11 @@
 // ─── Server / Admin types ────────────────────────────────────────────────────
 
 export interface OutlineServer {
-  id: string;           // uuid generated on save
-  name: string;         // friendly label
-  apiUrl: string;       // e.g. https://1.2.3.4:12345/AbCdEf
-  certSha256: string;   // hex fingerprint
-  addedAt: number;      // Date.now()
+  id: string;
+  name: string;
+  apiUrl: string;
+  certSha256: string;
+  addedAt: number;
 }
 
 export interface AccessKey {
@@ -15,8 +15,8 @@ export interface AccessKey {
   port: number;
   method: string;
   accessUrl: string;
-  dataLimit?: { bytes: number };  // from GET /access-keys response
-  limit?: { bytes: number };      // some Outline versions use "limit" instead of "dataLimit"
+  dataLimit?: { bytes: number };
+  limit?: { bytes: number };
 }
 
 export interface ServerInfo {
@@ -33,9 +33,55 @@ export interface TransferMetrics {
   bytesTransferredByUserId: Record<string, number>;
 }
 
-/** Per-key metadata stored locally by the admin (expiry date etc.) */
 export interface KeyMeta {
-  expiryDate: string | null; // ISO date string or null = no expiry
+  expiryDate: string | null;
+}
+
+// ─── Phase 2: Orders ─────────────────────────────────────────────────────────
+
+export type Plan = "plan_a" | "plan_b";
+
+export interface PlanInfo {
+  id: Plan;
+  label: string;
+  description: string;
+  price: string;
+  dataLimit: number | null; // bytes, null = unlimited
+  devices: string;
+}
+
+export const PLANS: PlanInfo[] = [
+  {
+    id: "plan_a",
+    label: "Plan A",
+    description: "1 Device / Unlimited Data",
+    price: "15,000 MMK / month",
+    dataLimit: null,
+    devices: "1 device",
+  },
+  {
+    id: "plan_b",
+    label: "Plan B",
+    description: "Unlimited Devices / 100 GB Data",
+    price: "5,000 MMK / month",
+    dataLimit: 100 * 1024 ** 3, // 100 GB in bytes
+    devices: "Unlimited devices",
+  },
+];
+
+export type OrderStatus = "pending" | "approved" | "rejected";
+
+export interface Order {
+  id: string;           // uuid
+  name: string;         // customer name
+  kpayRef: string;      // last 6 digits of KPay slip
+  plan: Plan;
+  status: OrderStatus;
+  serverId: string | null;  // which server the key was created on
+  keyId: string | null;     // Outline key ID after approval
+  accessUrl: string | null; // ss:// URL after approval
+  createdAt: number;        // Date.now()
+  approvedAt: number | null;
 }
 
 // ─── User / SS types ─────────────────────────────────────────────────────────
@@ -48,7 +94,6 @@ export interface DecodedSsKey {
   keyId: string | null;
   tag: string | null;
   raw: string;
-  // Embedded server credentials (added by admin's Share button)
   embeddedApiUrl?: string;
   embeddedCertSha256?: string;
 }
@@ -61,17 +106,13 @@ export interface SsConfKey {
   prefix?: string;
 }
 
-// ─── Role ────────────────────────────────────────────────────────────────────
-
 export type AppRole = "none" | "admin" | "user";
-
-// ─── API proxy request/response ──────────────────────────────────────────────
 
 export interface ProxyRequest {
   apiUrl: string;
   certSha256: string;
   method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  path: string;         // e.g. "/access-keys"
+  path: string;
   body?: unknown;
 }
 
