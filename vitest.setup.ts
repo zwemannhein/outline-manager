@@ -1,5 +1,8 @@
 import "@testing-library/jest-dom";
 
+// Keep test output readable: the auth and reset modules emit structured logs.
+process.env.LOG_LEVEL = "silent";
+
 // Mock environment variables for tests
 process.env.ADMIN_USERNAME = "testadmin";
 process.env.ADMIN_PASSWORD = "testpassword123";

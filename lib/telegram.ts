@@ -154,3 +154,154 @@ export function isValidBotToken(token: string): boolean {
 export function isValidChatId(chatId: string): boolean {
   return /^(@[A-Za-z0-9_]+|-?\d+)$/.test(chatId);
 }
+
+// ── Admin authentication messages ─────────────────────────────────────────────
+
+/**
+ * Build the admin login approval message text.
+ *
+ * Exported separately so tests can assert exactly what is and is not included.
+ * Deliberately carries NO password, JWT, browserSecret, or infrastructure
+ * credential — only what the admin needs to judge the request.
+ */
+export function buildLoginApprovalText(params: {
+  username: string;
+  browserSummary: string;
+  ip: string;
+  requestedAt: number | Date;
+}): string {
+  const when =
+    params.requestedAt instanceof Date
+      ? params.requestedAt
+      : new Date(params.requestedAt);
+
+  return (
+    `🔐 Admin Login Request\n\n` +
+    `👤 Username: ${params.username}\n` +
+    `🕐 Time: ${when.toLocaleString()}\n` +
+    `💻 Browser: ${params.browserSummary}\n` +
+    `🌐 IP: ${params.ip}\n\n` +
+    `Approve this login?`
+  );
+}
+
+/**
+ * Send an admin login approval request with Approve / Reject buttons.
+ *
+ * callback_data uses the explicit `login_*` prefix so the shared webhook can
+ * separate it from order callbacks.
+ */
+export async function sendLoginApprovalRequest(
+  config: TelegramConfig,
+  attempt: {
+    attemptId: string;
+    username: string;
+    browserSummary: string;
+    ip: string;
+    requestedAt: number | Date;
+  }
+): Promise<{ ok: boolean; messageId?: number; error?: string }> {
+  const message: TelegramMessage = {
+    chat_id: config.chatId,
+    text: buildLoginApprovalText(attempt),
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "✅ Approve", callback_data: `login_approve:${attempt.attemptId}` },
+          { text: "❌ Reject", callback_data: `login_reject:${attempt.attemptId}` },
+        ],
+      ],
+    },
+  };
+
+  const result = await sendTelegramMessage(config.botToken, message);
+  return {
+    ok: result.ok,
+    messageId: result.result?.message_id,
+    error: result.error,
+  };
+}
+
+/**
+ * Build the password reset message text.
+ *
+ * Includes the current admin USERNAME on purpose: Forgot Password must also
+ * recover a forgotten username, and possession of the Telegram chat is the
+ * authentication factor. Carries no password, hash, salt, or other secret.
+ */
+export function buildPasswordResetText(params: {
+  username: string;
+  code: string;
+  expiresInMinutes: number;
+}): string {
+  return (
+    `🔑 Password Reset Request\n\n` +
+    `👤 Username: ${params.username}\n` +
+    `🔢 Reset Code: ${params.code}\n` +
+    `⏳ Expires in: ${params.expiresInMinutes} minutes\n\n` +
+    `If you did not request this reset, ignore this message.`
+  );
+}
+
+/**
+ * Send the username + 6-digit reset code. No inline buttons: the code itself is
+ * the proof, entered back in the browser.
+ */
+export async function sendPasswordResetCode(
+  config: TelegramConfig,
+  params: { username: string; code: string; expiresInMinutes: number }
+): Promise<{ ok: boolean; error?: string }> {
+  const message: TelegramMessage = {
+    chat_id: config.chatId,
+    text: buildPasswordResetText(params),
+  };
+
+  const result = await sendTelegramMessage(config.botToken, message);
+  return { ok: result.ok, error: result.error };
+}
+
+/**
+ * Notify that the admin password changed. Never includes the new password.
+ */
+export async function sendPasswordChangedNotice(
+  config: TelegramConfig,
+  params: { username: string; via: "dashboard" | "reset" }
+): Promise<{ ok: boolean; error?: string }> {
+  const how = params.via === "dashboard" ? "dashboard Change Password" : "Forgot Password reset";
+  const message: TelegramMessage = {
+    chat_id: config.chatId,
+    text:
+      `✅ Admin Password Changed\n\n` +
+      `👤 Username: ${params.username}\n` +
+      `🛠 Via: ${how}\n` +
+      `🕐 Time: ${new Date().toLocaleString()}\n\n` +
+      `If this was not you, reset the password immediately.`,
+  };
+
+  const result = await sendTelegramMessage(config.botToken, message);
+  return { ok: result.ok, error: result.error };
+}
+
+/**
+ * Edit an existing message's text, used to reflect an approve/reject decision.
+ * Best-effort; failure is not surfaced to the caller as an error condition.
+ */
+export async function editTelegramMessageText(
+  botToken: string,
+  params: { chatId: string | number; messageId: number; text: string }
+): Promise<{ ok: boolean }> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: params.chatId,
+        message_id: params.messageId,
+        text: params.text,
+      }),
+    });
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
+  }
+}

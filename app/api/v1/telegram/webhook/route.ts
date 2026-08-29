@@ -24,9 +24,16 @@ import {
   sendApprovalConfirmation,
   sendRejectionConfirmation,
   sendTelegramMessage,
+  editTelegramMessageText,
 } from "@/lib/telegram";
-import { createLogger } from "@/lib/logger";
+import { createLogger, maskId } from "@/lib/logger";
 import { parseCallbackData } from "@/lib/telegram-callback";
+import {
+  approveLoginAttempt,
+  rejectLoginAttempt,
+  getAttemptView,
+  isValidAttemptId,
+} from "@/lib/login-attempts";
 import { timingSafeEqual, createHash } from "crypto";
 import type { Order, OutlineServer } from "@/lib/types";
 
@@ -98,11 +105,14 @@ export async function POST(req: NextRequest) {
     const parsed = parseCallbackData(callback_query.data);
 
     if (parsed.kind === "login") {
-      // Admin-login approval is not implemented yet. Answer the callback so the
-      // Telegram client does not spin, and take no action.
-      logger.warn("Received a login callback but login approval is not enabled");
-      await answerCallback(botToken, callback_query.id, "⚠️ Login approval not enabled");
-      return NextResponse.json({ ok: true });
+      return await handleLoginCallback({
+        botToken,
+        callbackId: callback_query.id,
+        chatId: incomingChatId,
+        messageId: callback_query.message.message_id,
+        action: parsed.action,
+        attemptId: parsed.id,
+      });
     }
 
     if (parsed.kind === "unknown") {
@@ -123,6 +133,75 @@ export async function POST(req: NextRequest) {
     logger.error({ error }, "Telegram webhook handler failed");
     return NextResponse.json({ ok: false, error: "Internal error" }, { status: 500 });
   }
+}
+
+// ── Admin login approve / reject ──────────────────────────────────────────────
+
+/**
+ * Handle a login_approve / login_reject callback.
+ *
+ * Records the decision atomically. Deliberately does NOT issue or transmit a
+ * JWT: the original browser must still return with its browserSecret, so
+ * approving here is not by itself enough to obtain a session.
+ */
+async function handleLoginCallback(ctx: {
+  botToken: string;
+  callbackId: string;
+  chatId: string;
+  messageId: number;
+  action: "approve" | "reject";
+  attemptId: string;
+}): Promise<NextResponse> {
+  const { botToken, callbackId, chatId, messageId, action, attemptId } = ctx;
+
+  if (!isValidAttemptId(attemptId)) {
+    await answerCallback(botToken, callbackId, "⚠️ Invalid login request");
+    return NextResponse.json({ ok: false });
+  }
+
+  const view = await getAttemptView(attemptId);
+  if (!view) {
+    await answerCallback(botToken, callbackId, "⚠️ Login request not found or expired");
+    return NextResponse.json({ ok: false });
+  }
+
+  const result =
+    action === "approve"
+      ? await approveLoginAttempt(attemptId)
+      : await rejectLoginAttempt(attemptId);
+
+  if (!result.ok) {
+    // Repeated taps are idempotent and report the settled state.
+    const label =
+      result.reason === "expired"
+        ? "⚠️ This login request expired"
+        : result.reason === "not_found"
+          ? "⚠️ Login request not found"
+          : `⚠️ Already ${result.status}`;
+    await answerCallback(botToken, callbackId, label);
+    logger.info({ attempt: maskId(attemptId), reason: result.reason }, "Login decision ignored");
+    return NextResponse.json({ ok: true });
+  }
+
+  const approved = action === "approve";
+
+  await answerCallback(botToken, callbackId, approved ? "✅ Login approved!" : "❌ Login rejected!");
+
+  // Best-effort: reflect the outcome in the message so the chat shows history.
+  await editTelegramMessageText(botToken, {
+    chatId,
+    messageId,
+    text:
+      (approved ? "✅ Login Approved\n\n" : "❌ Login Rejected\n\n") +
+      `👤 Username: ${view.username}\n` +
+      `🕐 Requested: ${view.createdAt ? new Date(view.createdAt).toLocaleString() : "unknown"}\n` +
+      `💻 Browser: ${view.userAgent}\n` +
+      `🌐 IP: ${view.ip}`,
+  });
+
+  logger.info({ attempt: maskId(attemptId), approved }, "Admin login decision recorded");
+
+  return NextResponse.json({ ok: true });
 }
 
 // ── Order approve / reject ────────────────────────────────────────────────────

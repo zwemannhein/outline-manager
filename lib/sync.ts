@@ -58,7 +58,36 @@ export function getAuthHeader(): string {
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<void> {
+// ── Admin login (two-step: credentials, then Telegram approval) ───────────────
+
+export interface LoginApprovalHandle {
+  attemptId: string;
+  /** Held in memory / sessionStorage only, never persisted long-term. */
+  browserSecret: string;
+  expiresAt: string;
+}
+
+export type LoginPollStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "consumed"
+  | "expired";
+
+async function readError(res: Response, fallback: string): Promise<string> {
+  const data = await res.json().catch(() => null);
+  return (data as { error?: string } | null)?.error || fallback;
+}
+
+/**
+ * Step 1: submit credentials. On success this does NOT log in — it returns a
+ * handle for the Telegram approval that must follow.
+ */
+export async function login(
+  username: string,
+  password: string
+): Promise<LoginApprovalHandle> {
   const res = await fetch("/api/v1/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,12 +95,148 @@ export async function login(username: string, password: string): Promise<void> {
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Login failed" }));
-    throw new Error(error.error || "Login failed");
+    throw new Error(await readError(res, "Login failed"));
   }
 
-  const data = await res.json();
-  setAuthToken(data.token, data.username);
+  const data = (await res.json()) as {
+    status: string;
+    attemptId: string;
+    browserSecret: string;
+    expiresAt: string;
+  };
+
+  if (data.status !== "approval_required" || !data.attemptId || !data.browserSecret) {
+    throw new Error("Unexpected login response");
+  }
+
+  return {
+    attemptId: data.attemptId,
+    browserSecret: data.browserSecret,
+    expiresAt: data.expiresAt,
+  };
+}
+
+/**
+ * Step 2: poll for the Telegram decision. When approved, the server issues the
+ * JWT and this stores it.
+ */
+export async function pollLoginStatus(
+  handle: LoginApprovalHandle
+): Promise<LoginPollStatus> {
+  const res = await fetch("/api/v1/auth/login/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      attemptId: handle.attemptId,
+      browserSecret: handle.browserSecret,
+    }),
+  });
+
+  if (!res.ok) {
+    // Treat transport/rate-limit errors as "still pending" so the UI keeps trying.
+    return "pending";
+  }
+
+  const data = (await res.json()) as {
+    status: LoginPollStatus;
+    token?: string;
+    username?: string;
+  };
+
+  if (data.status === "approved" && data.token && data.username) {
+    setAuthToken(data.token, data.username);
+    return "approved";
+  }
+
+  return data.status;
+}
+
+/** Abandon a pending approval so it cannot later be used. */
+export async function cancelLogin(handle: LoginApprovalHandle): Promise<void> {
+  try {
+    await fetch("/api/v1/auth/login/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attemptId: handle.attemptId,
+        browserSecret: handle.browserSecret,
+      }),
+    });
+  } catch {
+    // Best-effort: the attempt expires on its own within 5 minutes.
+  }
+}
+
+// ── Password management ───────────────────────────────────────────────────────
+
+/** Authenticated dashboard password change. */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+
+  const res = await fetch("/api/v1/auth/change-password", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res, "Could not change password"));
+  }
+}
+
+export interface ForgotPasswordStart {
+  status: "code_sent" | "cooldown";
+  resetId?: string;
+  retryAfterSeconds?: number;
+  resendCooldownSeconds?: number;
+}
+
+/**
+ * Begin recovery. Sends NO username: the server resolves the current admin
+ * username itself and delivers it over Telegram along with the code.
+ */
+export async function forgotPassword(
+  previousResetId?: string | null
+): Promise<ForgotPasswordStart> {
+  const res = await fetch("/api/v1/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(previousResetId ? { previousResetId } : {}),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res, "Could not start password reset"));
+  }
+
+  return (await res.json()) as ForgotPasswordStart;
+}
+
+export async function verifyResetCode(resetId: string, code: string): Promise<void> {
+  const res = await fetch("/api/v1/auth/forgot-password/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resetId, code }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res, "Invalid or expired code"));
+  }
+}
+
+export async function resetPassword(resetId: string, newPassword: string): Promise<void> {
+  const res = await fetch("/api/v1/auth/forgot-password/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resetId, newPassword }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res, "Could not reset password"));
+  }
 }
 
 export async function verifyToken(): Promise<boolean> {
@@ -85,6 +250,67 @@ export async function verifyToken(): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export interface SessionInfo {
+  valid: boolean;
+  username: string | null;
+  /** "env" while still on the bootstrap password, "redis" once one is set. */
+  passwordSource: "env" | "redis" | "none" | null;
+  /** True while first-run password setup must be completed. */
+  passwordChangeRequired: boolean;
+}
+
+/**
+ * Ask the server about the current session, including whether first-run password
+ * setup is still outstanding. Server-authoritative, so it survives a refresh and
+ * cannot be bypassed by clearing client state.
+ */
+export async function fetchSessionInfo(): Promise<SessionInfo> {
+  const auth = makeAuthHeader();
+  if (!auth) {
+    return { valid: false, username: null, passwordSource: null, passwordChangeRequired: false };
+  }
+
+  try {
+    const res = await fetch("/api/v1/auth/verify", { headers: { Authorization: auth } });
+    if (!res.ok) {
+      return { valid: false, username: null, passwordSource: null, passwordChangeRequired: false };
+    }
+    const data = (await res.json()) as {
+      valid: boolean;
+      username: string;
+      passwordSource: "env" | "redis" | "none";
+      passwordChangeRequired: boolean;
+    };
+    return {
+      valid: Boolean(data.valid),
+      username: data.username ?? null,
+      passwordSource: data.passwordSource ?? null,
+      passwordChangeRequired: Boolean(data.passwordChangeRequired),
+    };
+  } catch {
+    return { valid: false, username: null, passwordSource: null, passwordChangeRequired: false };
+  }
+}
+
+/**
+ * First-run password setup. Only valid while no runtime password exists.
+ * Requires no current password; see the route for why that is safe.
+ */
+export async function setBootstrapPassword(newPassword: string): Promise<void> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+
+  const res = await fetch("/api/v1/auth/bootstrap-password", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ newPassword }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readError(res, "Could not set password"));
   }
 }
 

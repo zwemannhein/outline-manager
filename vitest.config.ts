@@ -8,6 +8,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
+    // Real-infrastructure checks are opt-in via `npm run test:upstash`.
+    // They talk to live Upstash and must never run in the normal suite or CI.
+    exclude: ["**/node_modules/**", "**/dist/**", "**/*.upstash.test.ts"],
   },
   resolve: {
     alias: {
