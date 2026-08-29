@@ -5,12 +5,12 @@ import { OrderForm } from "@/components/OrderForm";
 import { AdminLoginForm } from "@/components/AdminLoginForm";
 import { AdminView } from "@/components/admin/AdminView";
 import { UserView } from "@/components/user/UserView";
-import { setAdminCreds, clearAdminCreds } from "@/lib/sync";
-import { Server } from "lucide-react";
+import { clearAuthToken } from "@/lib/sync";
+import { Server, Sparkles } from "lucide-react";
 
 type AppState =
-  | { role: "none" }           // show order form
-  | { role: "admin-login" }    // show admin login
+  | { role: "none" }
+  | { role: "admin-login" }
   | { role: "admin" }
   | { role: "user"; ssUrl: string };
 
@@ -47,15 +47,33 @@ export default function Home() {
   function transition(next: AppState) {
     setState(next);
     saveSession(next);
-    if (next.role === "none" || next.role === "admin-login") clearAdminCreds();
+    if (next.role === "none" || next.role === "admin-login") {
+      clearAuthToken();
+    }
   }
 
-  function handleAdminUnlock(username: string, password: string) {
-    setAdminCreds(username, password);
-    transition({ role: "admin" });
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+        <div className="text-center space-y-4">
+          <div className="relative">
+            <Server className="w-12 h-12 mx-auto text-blue-600 dark:text-blue-400 animate-pulse" />
+            <Sparkles className="w-6 h-6 absolute -top-1 -right-1 text-purple-500 animate-bounce" />
+          </div>
+          <p className="text-sm text-muted-foreground font-medium">Loading your experience...</p>
+        </div>
+      </div>
+    );
   }
 
-  if (!hydrated) return null;
+  if (state.role === "admin-login") {
+    return (
+      <AdminLoginForm
+        onUnlock={() => transition({ role: "admin" })}
+        onBack={() => transition({ role: "none" })}
+      />
+    );
+  }
 
   if (state.role === "admin") {
     return <AdminView onLogout={() => transition({ role: "none" })} />;
@@ -71,132 +89,141 @@ export default function Home() {
     );
   }
 
-  if (state.role === "admin-login") {
-    return (
-      <AdminLoginForm
-        onUnlock={handleAdminUnlock}
-        onBack={() => transition({ role: "none" })}
-      />
-    );
-  }
-
-  // Default: Order form + "My Key" tab
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+      {/* Animated background elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 bg-blue-400/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-purple-400/10 rounded-full blur-3xl animate-pulse delay-1000" />
+      </div>
+
       {/* Header */}
-      <header className="border-b bg-card px-4 py-3 flex items-center gap-2 sticky top-0 z-10">
-        <Server className="w-5 h-5 text-primary" />
-        <span className="font-bold text-sm sm:text-base">Outline VPN</span>
+      <header className="relative border-b bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg px-4 sm:px-6 py-4 sticky top-0 z-50 shadow-sm">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Server className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600 dark:text-blue-400" />
+              <Sparkles className="w-3 h-3 absolute -top-1 -right-1 text-purple-500" />
+            </div>
+            <div>
+              <h1 className="font-bold text-lg sm:text-xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                Outline VPN
+              </h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">Secure & Fast</p>
+            </div>
+          </div>
+          <button
+            onClick={() => transition({ role: "admin-login" })}
+            className="text-xs sm:text-sm text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+          >
+            Admin
+          </button>
+        </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center px-4 py-6 sm:py-10">
-        <div className="w-full max-w-md space-y-5">
-          {/* Title */}
-          <div className="text-center space-y-1">
-            <h1 className="text-xl sm:text-2xl font-bold">Get VPN Access</h1>
-            <p className="text-sm text-muted-foreground">
-              Pay via KPay and get your key instantly after approval.
+      {/* Main Content */}
+      <main className="relative flex flex-col items-center px-4 sm:px-6 py-8 sm:py-12">
+        <div className="w-full max-w-2xl space-y-6 sm:space-y-8">
+          {/* Hero Section */}
+          <div className="text-center space-y-3 sm:space-y-4">
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent leading-tight">
+              Get VPN Access
+            </h2>
+            <p className="text-sm sm:text-base text-muted-foreground max-w-xl mx-auto leading-relaxed">
+              Pay via KPay and get your secure VPN key instantly after approval. Fast, reliable, and easy to use.
             </p>
           </div>
 
-          {/* Tabs: Order / My Key */}
-          <TabView onAdminClick={() => transition({ role: "admin-login" })}
-            onUserUnlock={(ssUrl) => transition({ role: "user", ssUrl })} />
+          {/* Access Key Checker Card */}
+          <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 backdrop-blur-lg rounded-2xl sm:rounded-3xl shadow-xl border border-blue-200/50 dark:border-blue-700/50 p-6 sm:p-8">
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg">
+                  <Server className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                    Check Your Access Key
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Already have a key? Check your usage and status</p>
+                </div>
+              </div>
+              
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const input = (e.target as HTMLFormElement).elements.namedItem("ssUrl") as HTMLInputElement;
+                  const url = input.value.trim();
+                  if (url) {
+                    transition({ role: "user", ssUrl: url });
+                  }
+                }}
+                className="space-y-3"
+              >
+                <div>
+                  <label htmlFor="ssUrl" className="block text-sm font-medium mb-2">
+                    Paste your access key (ss:// or ssconf://)
+                  </label>
+                  <textarea
+                    id="ssUrl"
+                    name="ssUrl"
+                    rows={3}
+                    placeholder="ss://..."
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm px-4 py-3 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                    spellCheck={false}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5"
+                >
+                  Check Key Status
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300 dark:border-gray-700"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-4 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 text-muted-foreground font-medium">
+                Or order a new key
+              </span>
+            </div>
+          </div>
+
+          {/* Order Form Card */}
+          <div className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg rounded-2xl sm:rounded-3xl shadow-xl border border-gray-200/50 dark:border-gray-700/50 p-6 sm:p-8">
+            <OrderForm onAdminClick={() => transition({ role: "admin-login" })} />
+          </div>
+
+          {/* Features */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 pt-4">
+            {[
+              { icon: "🔒", title: "Secure", desc: "End-to-end encryption" },
+              { icon: "⚡", title: "Fast", desc: "High-speed servers" },
+              { icon: "🌍", title: "Global", desc: "Worldwide access" },
+            ].map((feature, i) => (
+              <div
+                key={i}
+                className="bg-white/60 dark:bg-gray-900/60 backdrop-blur-sm rounded-xl sm:rounded-2xl p-4 sm:p-6 text-center border border-gray-200/50 dark:border-gray-700/50 hover:shadow-lg transition-all duration-300 hover:-translate-y-1"
+              >
+                <div className="text-3xl sm:text-4xl mb-2 sm:mb-3">{feature.icon}</div>
+                <h3 className="font-semibold text-sm sm:text-base mb-1">{feature.title}</h3>
+                <p className="text-xs sm:text-sm text-muted-foreground">{feature.desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
-    </div>
-  );
-}
 
-// ── Tab view ──────────────────────────────────────────────────────────────────
-
-import { cn } from "@/lib/utils";
-import { detectInputKind } from "@/lib/ss-decoder";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { User } from "lucide-react";
-
-function TabView({
-  onAdminClick,
-  onUserUnlock,
-}: {
-  onAdminClick: () => void;
-  onUserUnlock: (ssUrl: string) => void;
-}) {
-  const [tab, setTab] = useState<"order" | "mykey">("order");
-  const [ssValue, setSsValue] = useState("");
-  const [ssError, setSsError] = useState("");
-
-  function handleKeySubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSsError("");
-    const trimmed = ssValue.trim();
-    if (!trimmed) { setSsError("Paste your access key."); return; }
-    const kind = detectInputKind(trimmed);
-    if (kind === "ss-url" || kind === "ssconf-url") {
-      onUserUnlock(trimmed);
-    } else {
-      setSsError("Not a valid key. Must start with ss:// or ssconf://");
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Tab switcher */}
-      <div className="flex rounded-lg border overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setTab("order")}
-          className={cn(
-            "flex-1 py-2.5 text-sm font-medium transition-colors",
-            tab === "order" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"
-          )}
-        >
-          Order Key
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("mykey")}
-          className={cn(
-            "flex-1 py-2.5 text-sm font-medium transition-colors",
-            tab === "mykey" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"
-          )}
-        >
-          My Key
-        </button>
-      </div>
-
-      {tab === "order" && <OrderForm onAdminClick={onAdminClick} />}
-
-      {tab === "mykey" && (
-        <form onSubmit={handleKeySubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="ss-key">Access Key</Label>
-            <textarea
-              id="ss-key"
-              value={ssValue}
-              onChange={(e) => { setSsValue(e.target.value); setSsError(""); }}
-              placeholder={"Paste your access key:\nss://… or ssconf://…"}
-              rows={3}
-              className={cn(
-                "w-full rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none",
-                "placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring",
-                ssError ? "border-destructive" : "border-input"
-              )}
-              spellCheck={false}
-              autoComplete="off"
-            />
-            {ssError && <p className="text-sm text-destructive">{ssError}</p>}
-          </div>
-          <Button type="submit" className="w-full" disabled={!ssValue.trim()}>
-            <User className="w-4 h-4 mr-2" /> Check My Key
-          </Button>
-          <p className="text-xs text-muted-foreground text-center">
-            Paste the <code className="bg-muted px-1 rounded">ss://</code> key you received after approval.
-          </p>
-        </form>
-      )}
+      {/* Footer */}
+      <footer className="relative text-center py-6 sm:py-8 text-xs sm:text-sm text-muted-foreground">
+        <p>© 2024 Outline VPN Manager. Secure & Private.</p>
+      </footer>
     </div>
   );
 }

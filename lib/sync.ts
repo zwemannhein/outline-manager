@@ -1,6 +1,6 @@
 /**
  * Sync client — reads/writes admin data to the server-side KV store.
- * Credentials are stored in sessionStorage so they survive page refreshes.
+ * Uses JWT tokens stored in sessionStorage.
  */
 
 import type { OutlineServer, KeyMeta } from "./types";
@@ -10,40 +10,81 @@ export interface AdminData {
   keyMeta: Record<string, KeyMeta>;
 }
 
-const CREDS_KEY = "outline_admin_creds";
+const TOKEN_KEY = "outline_admin_token";
+const USERNAME_KEY = "outline_admin_username";
 
-// ── Credential management ─────────────────────────────────────────────────────
+// ── Token management ──────────────────────────────────────────────────────────
 
-export function setAdminCreds(username: string, password: string) {
+export function setAuthToken(token: string, username: string): void {
   if (typeof window === "undefined") return;
-  sessionStorage.setItem(CREDS_KEY, btoa(`${username}:${password}`));
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(USERNAME_KEY, username);
 }
 
-export function clearAdminCreds() {
+export function clearAuthToken(): void {
   if (typeof window === "undefined") return;
-  sessionStorage.removeItem(CREDS_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USERNAME_KEY);
+}
+
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
+export function getUsername(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(USERNAME_KEY);
+}
+
+export function hasAuthToken(): boolean {
+  if (typeof window === "undefined") return false;
+  return !!sessionStorage.getItem(TOKEN_KEY);
 }
 
 function makeAuthHeader(): string {
-  if (typeof window === "undefined") return "";
-  const stored = sessionStorage.getItem(CREDS_KEY);
-  if (!stored) return "";
-  return `Bearer ${stored}`;
-}
-
-export function hasAdminCreds(): boolean {
-  if (typeof window === "undefined") return false;
-  return !!sessionStorage.getItem(CREDS_KEY);
+  const token = getAuthToken();
+  return token ? `Bearer ${token}` : "";
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
+
+export async function login(username: string, password: string): Promise<void> {
+  const res = await fetch("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: "Login failed" }));
+    throw new Error(error.error || "Login failed");
+  }
+
+  const data = await res.json();
+  setAuthToken(data.token, data.username);
+}
+
+export async function verifyToken(): Promise<boolean> {
+  const auth = makeAuthHeader();
+  if (!auth) return false;
+
+  try {
+    const res = await fetch("/api/v1/auth/verify", {
+      headers: { Authorization: auth },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export async function fetchAdminData(): Promise<AdminData> {
   const auth = makeAuthHeader();
   if (!auth) return loadLocalData();
 
   try {
-    const res = await fetch("/api/store", {
+    const res = await fetch("/api/v1/store", {
       headers: { Authorization: auth },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -63,7 +104,7 @@ export async function pushAdminData(data: AdminData): Promise<void> {
   if (!auth) return;
 
   try {
-    await fetch("/api/store", {
+    await fetch("/api/v1/store", {
       method: "POST",
       headers: {
         Authorization: auth,

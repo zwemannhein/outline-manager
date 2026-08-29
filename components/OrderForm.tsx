@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Smartphone, Wifi, Sliders, CheckCircle2,
   Copy, Check, Clock, XCircle, Database,
-  Users, CalendarDays, Infinity,
+  Users, CalendarDays, Infinity, Server,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,6 +93,11 @@ const FIXED_PLANS = [
 
 type PlanChoice = "plan_a" | "plan_b" | "custom";
 
+interface ServerOption {
+  id: string;
+  name: string;
+}
+
 interface OrderFormProps {
   onAdminClick: () => void;
 }
@@ -165,6 +170,21 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
   const [name, setName] = useState("");
   const [kpayRef, setKpayRef] = useState("");
   const [planChoice, setPlanChoice] = useState<PlanChoice>("plan_a");
+  const [serverId, setServerId] = useState<string>("");
+  const [servers, setServers] = useState<ServerOption[]>([]);
+  const [serversLoading, setServersLoading] = useState(true);
+
+  // Fetch available servers on mount
+  useEffect(() => {
+    fetch("/api/v1/servers")
+      .then((r) => r.json())
+      .then((data: ServerOption[]) => {
+        setServers(data);
+        if (data.length > 0) setServerId(data[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setServersLoading(false));
+  }, []);
 
   // Custom plan state
   const [dataUnlimited, setDataUnlimited] = useState(false);
@@ -207,6 +227,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = "Name is required";
     if (!/^\d{6}$/.test(kpayRef.trim())) e.kpayRef = "Enter exactly 6 digits";
+    if (!serverId) e.serverId = "Please select a server";
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -216,10 +237,10 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
     if (!validate()) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/orders", {
+      const res = await fetch("/api/v1/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), kpayRef: kpayRef.trim(), ...getPlanPayload() }),
+        body: JSON.stringify({ name: name.trim(), kpayRef: kpayRef.trim(), serverId, ...getPlanPayload() }),
       });
       const data = await res.json() as { id?: string; error?: string };
       if (!res.ok) { setErrors({ form: data.error ?? "Submission failed" }); return; }
@@ -234,20 +255,42 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
   }
 
   function startPolling(id: string) {
-    const interval = setInterval(async () => {
+    let attempt = 0;
+    const maxAttempts = 100;
+    const initialDelay = 2000;
+    const maxDelay = 30000;
+    const backoffMultiplier = 1.5;
+    let timeoutId: NodeJS.Timeout;
+
+    const poll = async () => {
+      attempt++;
+      if (attempt > maxAttempts) return;
+
       try {
-        const res = await fetch(`/api/orders/${id}/status`);
+        const res = await fetch(`/api/v1/orders/${id}/status`);
         const data = await res.json() as { status: string; accessUrl?: string };
         if (data.status === "approved") {
-          clearInterval(interval);
           setAccessUrl(data.accessUrl ?? null);
           setStep("approved");
+          return;
         } else if (data.status === "rejected") {
-          clearInterval(interval);
           setStep("rejected");
+          return;
         }
       } catch { /* keep polling */ }
-    }, 3000);
+
+      // Exponential backoff
+      const delay = Math.min(
+        initialDelay * Math.pow(backoffMultiplier, attempt - 1),
+        maxDelay
+      );
+      timeoutId = setTimeout(poll, delay);
+    };
+
+    poll();
+
+    // Cleanup on unmount
+    return () => clearTimeout(timeoutId);
   }
 
   function resetForm() {
@@ -255,6 +298,7 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
     setPlanChoice("plan_a"); setGbIdx(3); setMonthIdx(0);
     setDeviceIdx(0); setDataUnlimited(false);
     setOrderId(null); setAccessUrl(null); setErrors({});
+    if (servers.length > 0) setServerId(servers[0].id);
   }
 
   // ── Approved ──────────────────────────────────────────────────────────────
@@ -363,6 +407,49 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
           className={cn("font-mono tracking-widest text-center text-lg h-12", errors.kpayRef ? "border-destructive" : "")}
         />
         {errors.kpayRef && <p className="text-xs text-destructive">{errors.kpayRef}</p>}
+      </div>
+
+      {/* Server selection */}
+      <div className="space-y-1.5">
+        <Label>Select Server</Label>
+        {serversLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+            <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+            Loading servers...
+          </div>
+        ) : servers.length === 0 ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            No servers available. Please contact admin.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2">
+            {servers.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setServerId(s.id)}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all",
+                  serverId === s.id
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40"
+                )}
+              >
+                <div className={cn(
+                  "p-1.5 rounded-lg",
+                  serverId === s.id ? "bg-primary/10" : "bg-muted"
+                )}>
+                  <Server className={cn("w-4 h-4", serverId === s.id ? "text-primary" : "text-muted-foreground")} />
+                </div>
+                <span className="font-medium text-sm">{s.name}</span>
+                {serverId === s.id && (
+                  <Check className="w-4 h-4 text-primary ml-auto" />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        {errors.serverId && <p className="text-xs text-destructive">{errors.serverId}</p>}
       </div>
 
       {/* Plan selection */}
