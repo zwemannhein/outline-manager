@@ -10,6 +10,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import {
+  saveOrderClaim,
+  loadOrderClaim,
+  clearOrderClaim,
+  fetchOrderStatus,
+} from "@/lib/sync";
 
 // ── Pricing ───────────────────────────────────────────────────────────────────
 const MMK_PER_GB    = 50;       // per GB per month
@@ -195,8 +201,47 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState<Step>("form");
   const [orderId, setOrderId] = useState<string | null>(null);
-  const [accessUrl, setAccessUrl] = useState<string | null>(null);
+  /** The customer's PERMANENT ssconf:// key. Never a raw ss:// URL. */
+  const [dynamicUrl, setDynamicUrl] = useState<string | null>(null);
+  const [planDescription, setPlanDescription] = useState<string | null>(null);
+  const [expiryDate, setExpiryDate] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  /**
+   * Resume a pending order after a page reload or browser restart.
+   * The claim token in localStorage is the only way back to the order — the
+   * order id is no longer a credential.
+   */
+  useEffect(() => {
+    const stored = loadOrderClaim();
+    if (!stored) return;
+
+    let cancelled = false;
+    fetchOrderStatus(stored.claimToken)
+      .then((data) => {
+        if (cancelled || !data) return;
+        setOrderId(stored.orderId);
+        if (data.status === "approved") {
+          setDynamicUrl(data.dynamicUrl);
+          setPlanDescription(data.planDescription ?? null);
+          setExpiryDate(data.expiryDate ?? null);
+          setStep("approved");
+        } else if (data.status === "rejected") {
+          setStep("rejected");
+        } else {
+          setStep("pending");
+          startPolling(stored.claimToken);
+        }
+      })
+      .catch(() => {
+        /* ignore: the customer can simply place a new order */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Derived custom values
   const customGb     = dataUnlimited ? null : GB_OPTIONS[gbIdx];
@@ -242,11 +287,19 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), kpayRef: kpayRef.trim(), serverId, ...getPlanPayload() }),
       });
-      const data = await res.json() as { id?: string; error?: string };
+      const data = await res.json() as { id?: string; claimToken?: string; error?: string };
       if (!res.ok) { setErrors({ form: data.error ?? "Submission failed" }); return; }
-      setOrderId(data.id!);
-      setStep("pending");
-      startPolling(data.id!);
+
+      // The claim token is returned exactly once. Persist it so the customer can
+      // close the browser and still retrieve their key later.
+      if (data.id && data.claimToken) {
+        saveOrderClaim(data.id, data.claimToken);
+        setOrderId(data.id);
+        setStep("pending");
+        startPolling(data.claimToken);
+      } else {
+        setErrors({ form: "Unexpected response from server." });
+      }
     } catch {
       setErrors({ form: "Network error. Please try again." });
     } finally {
@@ -254,7 +307,8 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
     }
   }
 
-  function startPolling(id: string) {
+  /** Poll by claim token, with exponential backoff. */
+  function startPolling(claimToken: string) {
     let attempt = 0;
     const maxAttempts = 100;
     const initialDelay = 2000;
@@ -267,19 +321,20 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
       if (attempt > maxAttempts) return;
 
       try {
-        const res = await fetch(`/api/v1/orders/${id}/status`);
-        const data = await res.json() as { status: string; accessUrl?: string };
-        if (data.status === "approved") {
-          setAccessUrl(data.accessUrl ?? null);
+        const data = await fetchOrderStatus(claimToken);
+        if (data?.status === "approved") {
+          setDynamicUrl(data.dynamicUrl);
+          setPlanDescription(data.planDescription ?? null);
+          setExpiryDate(data.expiryDate ?? null);
           setStep("approved");
           return;
-        } else if (data.status === "rejected") {
+        }
+        if (data?.status === "rejected") {
           setStep("rejected");
           return;
         }
       } catch { /* keep polling */ }
 
-      // Exponential backoff
       const delay = Math.min(
         initialDelay * Math.pow(backoffMultiplier, attempt - 1),
         maxDelay
@@ -289,15 +344,16 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
 
     poll();
 
-    // Cleanup on unmount
     return () => clearTimeout(timeoutId);
   }
 
   function resetForm() {
+    clearOrderClaim();
     setStep("form"); setName(""); setKpayRef("");
     setPlanChoice("plan_a"); setGbIdx(3); setMonthIdx(0);
     setDeviceIdx(0); setDataUnlimited(false);
-    setOrderId(null); setAccessUrl(null); setErrors({});
+    setOrderId(null); setDynamicUrl(null); setErrors({});
+    setPlanDescription(null); setExpiryDate(null);
     if (servers.length > 0) setServerId(servers[0].id);
   }
 
@@ -310,15 +366,45 @@ export function OrderForm({ onAdminClick }: OrderFormProps) {
         </div>
         <div>
           <h2 className="text-xl font-bold">Payment Approved!</h2>
-          <p className="text-sm text-muted-foreground mt-1">Your VPN access key is ready.</p>
+          <p className="text-sm text-muted-foreground mt-1">Your VPN key is ready.</p>
         </div>
-        {accessUrl && (
+
+        {dynamicUrl ? (
           <div className="rounded-xl border bg-muted/50 p-4 space-y-3 text-left">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Your Access Key</p>
-            <p className="text-xs font-mono break-all text-foreground leading-relaxed">{accessUrl}</p>
-            <CopyButton text={accessUrl} />
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Your permanent access key
+            </p>
+            <p className="text-xs font-mono break-all text-foreground leading-relaxed">{dynamicUrl}</p>
+            <CopyButton text={dynamicUrl} />
+            {/* The whole point of the permanent key, stated plainly. */}
+            <p className="text-[11px] text-muted-foreground">
+              Add this key once. It keeps working even if we move you to a faster server or change your
+              data plan — you will never need a new key.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border bg-muted/50 p-4 text-left text-sm">
+            <p>Your key is being prepared. This page will update automatically.</p>
           </div>
         )}
+
+        {(planDescription || expiryDate) && (
+          <div className="rounded-lg border bg-background p-4 text-left text-xs space-y-1">
+            {planDescription && (
+              <p>
+                <span className="text-muted-foreground">Plan: </span>
+                <span className="font-medium">{planDescription}</span>
+              </p>
+            )}
+            {expiryDate && (
+              <p>
+                <span className="text-muted-foreground">Valid until: </span>
+                <span className="font-medium">{new Date(expiryDate).toLocaleDateString()}</span>
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30 p-4 text-sm text-blue-700 dark:text-blue-300 text-left space-y-1">
           <p className="font-medium">How to connect:</p>
           <ol className="list-decimal list-inside space-y-1 text-xs opacity-90">

@@ -17,9 +17,10 @@ import {
 } from "@/lib/sync";
 import { uuid } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound } from "lucide-react";
+import { LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrdersPanel } from "./OrdersPanel";
+import { CustomersPanel } from "./CustomersPanel";
 import type { OutlineServer } from "@/lib/types";
 
 interface AdminViewProps {
@@ -35,7 +36,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syncing, setSyncing] = useState(true);
-  const [activeTab, setActiveTab] = useState<"servers" | "orders">("servers");
+  const [activeTab, setActiveTab] = useState<"servers" | "customers" | "orders">("servers");
 
   // Server-authoritative check for outstanding first-run password setup.
   // null = still checking, so the dashboard is never rendered prematurely.
@@ -227,6 +228,17 @@ export function AdminView({ onLogout }: AdminViewProps) {
                 Servers
               </button>
               <button
+                onClick={() => setActiveTab("customers")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  activeTab === "customers"
+                    ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                Customers
+              </button>
+              <button
                 onClick={() => setActiveTab("orders")}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
                   activeTab === "orders"
@@ -259,6 +271,8 @@ export function AdminView({ onLogout }: AdminViewProps) {
         {/* Content */}
         {activeTab === "orders" ? (
           <OrdersPanel authHeader={authHeader} servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
+        ) : activeTab === "customers" ? (
+          <CustomersPanel servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
         ) : activeServer ? (
           <ServerDashboard
             key={activeServer.id}

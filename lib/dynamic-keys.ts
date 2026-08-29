@@ -43,9 +43,6 @@ import type {
 
 const logger = createLogger("dynamic-keys");
 
-/** Fallback host, used when DYNAMIC_KEY_BASE_URL is not configured. */
-const DEFAULT_BASE_HOST = "outline-config.zwellmunheimn.workers.dev";
-
 /** Cap history so a long-lived identity cannot grow without bound. */
 const MAX_HISTORY_ENTRIES = 20;
 
@@ -73,131 +70,23 @@ export function generateDynamicToken(): string {
   return randomBytes(16).toString("hex");
 }
 
-/** Exactly 32 lowercase hex characters. Uppercase is rejected deliberately. */
-export function isValidDynamicToken(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
-}
-
-// ── URL building / parsing ────────────────────────────────────────────────────
-
 /**
- * Canonical base, normalised to `https://host[/path]` with no trailing slash.
- * Configured via DYNAMIC_KEY_BASE_URL (server-side only; not a secret, but kept
- * off the client so there is a single source of truth).
+ * URL building and parsing live in lib/dynamic-url.ts so the browser can use the
+ * same implementation without pulling in server-only modules. Re-exported here
+ * so server code has one obvious import site.
  */
-export function getDynamicBaseUrl(): string {
-  const raw = process.env.DYNAMIC_KEY_BASE_URL?.trim();
-  if (!raw) return `https://${DEFAULT_BASE_HOST}`;
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
-  return withScheme.replace(/\/+$/, "");
-}
+export {
+  isValidDynamicToken,
+  getDynamicBaseUrl,
+  getDynamicBaseHost,
+  buildDynamicUrl,
+  buildDynamicHttpsUrl,
+  encodeDisplayName,
+  parseDynamicUrl,
+  type ParsedDynamicUrl,
+} from "./dynamic-url";
 
-/** Host portion of the configured base, used when parsing customer input. */
-export function getDynamicBaseHost(): string {
-  try {
-    return new URL(getDynamicBaseUrl()).host;
-  } catch {
-    return DEFAULT_BASE_HOST;
-  }
-}
-
-/**
- * The permanent customer URL.
- *
- * Path-based (`/k/<token>`), never a query string: some Outline clients drop the
- * query when fetching a remote config, and a path also survives naive
- * copy-paste and chat-app link detection.
- *
- * The display name goes in the OUTER fragment. Fragments are never transmitted
- * in an HTTP request, so the Worker structurally cannot see it — the name is
- * presentation metadata and cannot participate in lookup.
- */
-export function buildDynamicUrl(token: string, name?: string | null): string {
-  if (!isValidDynamicToken(token)) {
-    throw new Error("buildDynamicUrl: invalid dynamic token");
-  }
-
-  const base = getDynamicBaseUrl().replace(/^https?:\/\//i, "");
-  const url = `ssconf://${base}/k/${token}`;
-
-  const label = encodeDisplayName(name);
-  return label ? `${url}#${label}` : url;
-}
-
-/** The https:// form of the same endpoint, for diagnostics and admin display. */
-export function buildDynamicHttpsUrl(token: string): string {
-  if (!isValidDynamicToken(token)) {
-    throw new Error("buildDynamicHttpsUrl: invalid dynamic token");
-  }
-  return `${getDynamicBaseUrl()}/k/${token}`;
-}
-
-/**
- * Percent-encode a customer name for use as a URI fragment.
- *
- * encodeURIComponent handles spaces, Burmese script and emoji correctly. `!'()*`
- * are additionally escaped because encodeURIComponent leaves them literal and
- * some clients treat them as delimiters.
- */
-export function encodeDisplayName(name?: string | null): string {
-  if (!name) return "";
-  const trimmed = name.trim();
-  if (!trimmed) return "";
-  return encodeURIComponent(trimmed).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-  );
-}
-
-export interface ParsedDynamicUrl {
-  token: string;
-  /** Decoded display name, or null when the URL carried no fragment. */
-  name: string | null;
-}
-
-/**
- * Accepts any form a customer might paste:
- *   ssconf://host/k/<token>#Name
- *   https://host/k/<token>
- *   /k/<token>
- *   <token>
- *
- * Returns null when no valid token is present. Host is not required to match, so
- * a changed DYNAMIC_KEY_BASE_URL does not break parsing of older links.
- */
-export function parseDynamicUrl(input: string): ParsedDynamicUrl | null {
-  if (typeof input !== "string") return null;
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // Split off the fragment first; everything before it is the locator.
-  const hashAt = trimmed.indexOf("#");
-  const locator = hashAt === -1 ? trimmed : trimmed.slice(0, hashAt);
-  const rawFragment = hashAt === -1 ? "" : trimmed.slice(hashAt + 1);
-
-  let name: string | null = null;
-  if (rawFragment) {
-    try {
-      name = decodeURIComponent(rawFragment);
-    } catch {
-      // A malformed fragment must not invalidate an otherwise good token.
-      name = rawFragment;
-    }
-  }
-
-  // Bare token.
-  if (isValidDynamicToken(locator)) {
-    return { token: locator, name };
-  }
-
-  // Any locator containing /k/<token>, with or without a scheme or host.
-  const match = /\/k\/([0-9a-f]{32})\/?$/.exec(locator);
-  if (match) {
-    return { token: match[1], name };
-  }
-
-  return null;
-}
+import { isValidDynamicToken } from "./dynamic-url";
 
 // ── Record serialisation ──────────────────────────────────────────────────────
 

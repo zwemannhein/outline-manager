@@ -370,3 +370,244 @@ export function saveLocalData(data: AdminData): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(LS_KEY, JSON.stringify(data));
 }
+
+// ── Dynamic customer identities (admin) ───────────────────────────────────────
+
+export interface DynamicCustomerRow {
+  token: string;
+  name: string;
+  orderId: string | null;
+  serverId: string;
+  serverName: string;
+  outlineKeyId: string;
+  status: "active" | "disabled" | "expired" | "revoked";
+  rev: number;
+  createdAt: string;
+  updatedAt: string;
+  /** The customer's permanent key. This is what "Copy Key" copies. */
+  dynamicUrl: string;
+  /** Only present when explicitly requested via revealRaw. */
+  accessUrl?: string;
+  quotaBytes: number | null;
+  usedBytes: number;
+  carriedBytes: number;
+  remainingBytes: number | null;
+  quotaExhausted: boolean;
+  planDescription: string | null;
+  periodStart: string | null;
+  expiryDate: string | null;
+  cyclesTotal: number | null;
+  cyclesUsed: number | null;
+  syncState: "synced" | "pending" | "unknown" | "not_configured";
+  suspendedState: { previousLimitBytes: number | null; reason: string } | null;
+  cleanupPending: boolean;
+}
+
+export interface DynamicHealth {
+  kvWritesUsedToday: number;
+  kvWriteLimit: number;
+  kvWritesRemaining: number;
+  kvBudgetWarning: boolean;
+  pendingEdgeSyncs: number;
+}
+
+export async function fetchDynamicCustomers(): Promise<{
+  customers: DynamicCustomerRow[];
+  health: DynamicHealth;
+}> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+
+  const res = await fetch("/api/v1/dynamic-keys", { headers: { Authorization: auth } });
+  if (!res.ok) throw new Error(await readError(res, "Could not load customers"));
+
+  return (await res.json()) as { customers: DynamicCustomerRow[]; health: DynamicHealth };
+}
+
+/** All admin lifecycle mutations funnel through one endpoint. */
+async function dynamicAction<T>(payload: Record<string, unknown>): Promise<T> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+
+  const res = await fetch("/api/v1/dynamic-keys/actions", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const err = new Error(
+      (data as { error?: string } | null)?.error || "Action failed"
+    ) as Error & { code?: string; details?: unknown };
+    err.code = (data as { code?: string } | null)?.code;
+    err.details = (data as { details?: unknown } | null)?.details;
+    throw err;
+  }
+
+  return (await res.json()) as T;
+}
+
+export function disableCustomer(token: string) {
+  return dynamicAction<{ ok: boolean; status: string; syncPending: boolean }>({
+    action: "disable",
+    token,
+  });
+}
+
+export function enableCustomer(token: string, serverId?: string | null) {
+  return dynamicAction<{
+    ok: boolean;
+    recreatedKey: boolean;
+    dynamicUrl: string | null;
+    syncPending: boolean;
+  }>({ action: "enable", token, serverId: serverId ?? null });
+}
+
+export function renewCustomer(token: string, additionalCycles: number) {
+  return dynamicAction<{ ok: boolean; expiryDate: string | null; cyclesTotal: number }>({
+    action: "renew",
+    token,
+    additionalCycles,
+  });
+}
+
+export function updateCustomerQuota(token: string, quotaGB: number | null) {
+  return dynamicAction<{ ok: boolean; quotaBytes: number | null; urlChanged: boolean }>({
+    action: "updateQuota",
+    token,
+    quotaGB,
+  });
+}
+
+export function migrateCustomer(
+  token: string,
+  destServerId: string,
+  allowExhausted = false
+) {
+  return dynamicAction<{
+    ok: boolean;
+    destServerId: string;
+    destKeyId: string;
+    carriedBytes: number;
+    urlChanged: boolean;
+    cleanupRequired: boolean;
+    syncPending: boolean;
+  }>({ action: "migrate", token, destServerId, allowExhausted });
+}
+
+export function cleanupCustomerMigration(token: string) {
+  return dynamicAction<{ ok: boolean; deleted: unknown[]; skipped: number }>({
+    action: "migrateCleanup",
+    token,
+  });
+}
+
+/** Admin troubleshooting only. Deliberately a separate, audited call. */
+export function revealRawKey(token: string) {
+  return dynamicAction<{ ok: boolean; accessUrl: string; outlineKeyId: string }>({
+    action: "revealRaw",
+    token,
+  });
+}
+
+export function resyncCustomer(token: string) {
+  return dynamicAction<{ ok: boolean }>({ action: "resync", token });
+}
+
+// ── Customer order flow ───────────────────────────────────────────────────────
+
+const CLAIM_STORAGE_KEY = "outline_order_claim";
+
+interface StoredClaim {
+  orderId: string;
+  claimToken: string;
+  savedAt: number;
+}
+
+/**
+ * Claim tokens live in localStorage so a customer can close the browser while
+ * waiting for approval and still retrieve their key later. The server TTL is 30
+ * days; stale entries are pruned client-side.
+ *
+ * Only the claim token is stored — never a VPN credential.
+ */
+export function saveOrderClaim(orderId: string, claimToken: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const payload: StoredClaim = { orderId, claimToken, savedAt: Date.now() };
+    localStorage.setItem(CLAIM_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Storage may be unavailable in private mode; the flow still works in-session.
+  }
+}
+
+export function loadOrderClaim(): StoredClaim | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CLAIM_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredClaim;
+    if (!parsed?.claimToken || !/^[0-9a-f]{32}$/.test(parsed.claimToken)) {
+      clearOrderClaim();
+      return null;
+    }
+    // Match the server-side 30-day TTL.
+    if (Date.now() - (parsed.savedAt ?? 0) > 30 * 24 * 60 * 60 * 1000) {
+      clearOrderClaim();
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearOrderClaim(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(CLAIM_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface OrderStatusResponse {
+  status: "pending" | "approved" | "rejected";
+  name: string;
+  plan: string;
+  createdAt: number;
+  /** The permanent customer key. Null until approved. Never a raw ss:// URL. */
+  dynamicUrl: string | null;
+  pendingSetup?: boolean;
+  keyStatus?: string;
+  planDescription?: string | null;
+  expiryDate?: string | null;
+  cyclesTotal?: number | null;
+  cyclesUsed?: number | null;
+  usage?: {
+    totalUsedBytes: number;
+    quotaBytes: number | null;
+    remainingBytes: number | null;
+  } | null;
+}
+
+/**
+ * Look up an order by claim token. Returns null for an unknown or expired claim,
+ * and clears the stale local copy so the UI does not keep retrying.
+ */
+export async function fetchOrderStatus(claimToken: string): Promise<OrderStatusResponse | null> {
+  const res = await fetch("/api/v1/orders/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ claimToken }),
+  });
+
+  if (res.status === 404) {
+    clearOrderClaim();
+    return null;
+  }
+  if (!res.ok) throw new Error(await readError(res, "Could not load order status"));
+
+  return (await res.json()) as OrderStatusResponse;
+}

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { DEFAULT_PLANS } from "@/lib/types";
+import { buildDynamicUrl as buildCustomerKeyUrl } from "@/lib/dynamic-url";
 import type { Order } from "@/lib/types";
 
 interface OrdersPanelProps {
@@ -391,14 +392,22 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                   <span className="text-xs text-muted-foreground">{planDesc}</span>
                 </div>
 
-                {/* Access URL */}
-                {order.accessUrl && (
+                {/*
+                  Permanent key only. The raw ss:// URL is deliberately not shown
+                  here — it is available under Customers → Reveal raw key, which
+                  is audited.
+                */}
+                {order.dynamicToken && (
                   <div className="flex items-center gap-2 backdrop-blur-sm bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/30 dark:to-purple-950/30 rounded-lg px-3 py-2.5 border border-blue-200/50 dark:border-blue-900/50">
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">Access Key</p>
-                      <p className="text-xs font-mono truncate text-foreground">{order.accessUrl}</p>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">
+                        Permanent Key
+                      </p>
+                      <p className="text-xs font-mono truncate text-foreground">
+                        {buildCustomerKeyUrl(order.dynamicToken, order.name)}
+                      </p>
                     </div>
-                    <CopyButton text={order.accessUrl} />
+                    <CopyButton text={buildCustomerKeyUrl(order.dynamicToken, order.name)} />
                   </div>
                 )}
               </div>

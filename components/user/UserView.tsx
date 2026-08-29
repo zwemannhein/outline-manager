@@ -82,10 +82,14 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
     const startTime = Date.now();
 
     try {
+      // Send the raw pasted key alongside the decoded fields. For a permanent
+      // ssconf:// key the decoded host is the Worker, not an Outline server, so
+      // the server resolves it by token from `key` instead.
       const res = await fetch("/api/v1/key-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          key: ssUrl,
           ssHost: decoded.host,
           keyId: decoded.keyId ?? undefined,
           password: decoded.password,
@@ -118,7 +122,9 @@ export function UserView({ ssUrl, onLogout, onSwitchKey }: UserViewProps) {
     } finally {
       setRefreshing(false);
     }
-  }, [decoded]);
+    // ssUrl is sent verbatim so the server can resolve a permanent ssconf:// key
+    // by token; `decoded` is derived from it, so both belong in the deps.
+  }, [decoded, ssUrl]);
 
   React.useEffect(() => { load(false); }, [load]);
 

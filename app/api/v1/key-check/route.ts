@@ -1,5 +1,19 @@
 /**
- * POST /api/v1/key-check — Check key status (public, rate-limited, with caching)
+ * POST /api/v1/key-check — public "check my key" endpoint.
+ *
+ * Accepts EITHER form a customer might hold:
+ *
+ *   1. a permanent key            ssconf://host/k/<token>#Name  (or a bare token)
+ *   2. a legacy raw Shadowsocks   ss://...
+ *
+ * Path 1 is the reason this route was rewritten. `decodeSsUrl` resolves an
+ * ssconf:// URL to the WORKER's hostname, which is not an Outline server, so the
+ * old host-matching logic returned SERVER_NOT_FOUND for every customer holding a
+ * permanent key. Resolving the token through the dynamic identity fixes that.
+ *
+ * Path 2 keeps working for customers who have not yet been switched over.
+ *
+ * Never returns the raw ss:// URL, the server's apiUrl, or a key count.
  */
 
 export const runtime = "nodejs";
@@ -16,196 +30,190 @@ import {
   AppError,
 } from "@/lib/api-utils";
 import { keyCheckSchema } from "@/lib/validation";
-import { createLogger } from "@/lib/logger";
-import https from "https";
-import type { IncomingMessage } from "http";
+import { createLogger, maskId } from "@/lib/logger";
+import { parseDynamicUrl, readDynamicRecord, isValidDynamicToken } from "@/lib/dynamic-keys";
+import { readKeyMeta, computeQuotaUsage, describeQuota } from "@/lib/key-meta";
+import {
+  listRegisteredServers,
+  listAccessKeys,
+  getTransferMetrics,
+  getKeyUsageBytes,
+} from "@/lib/outline-admin";
+import type { AccessKey } from "@/lib/types";
 
 const logger = createLogger("key-check");
-const CACHE_TTL = 60; // 1 minute cache
 
-interface StoredData {
-  servers: Array<{
-    id: string;
-    name: string;
-    apiUrl: string;
-    certSha256: string;
-  }>;
-  keyMeta: Record<string, { expiryDate: string | null }>;
+/** Short cache so repeated taps do not hammer the Outline servers. */
+const CACHE_TTL = 60;
+
+interface KeyStatusResponse {
+  serverName: string;
+  keyName: string | null;
+  keyId: string;
+  bytesUsed: number;
+  dataLimit: number | null;
+  expiryDate: string | null;
+  /** Present for permanent keys. */
+  status?: string;
+  planDescription?: string | null;
+  cyclesTotal?: number | null;
+  cyclesUsed?: number | null;
+  remainingBytes?: number | null;
 }
-
-interface AccessKey {
-  id: string;
-  name: string;
-  password: string;
-  accessUrl: string;
-  dataLimit?: { bytes: number };
-  limit?: { bytes: number };
-}
-
-// ── HTTPS helpers ─────────────────────────────────────────────────────────────
-
-function httpsRequest(
-  url: string,
-  options: https.RequestOptions
-): Promise<{ status: number; data: string }> {
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, options, (res: IncomingMessage) => {
-      let data = "";
-      res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, data }));
-    });
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-function buildAgent(certSha256: string): https.Agent {
-  const normalized = certSha256.replace(/:/g, "").toUpperCase();
-  return new https.Agent({
-    rejectUnauthorized: false,
-    checkServerIdentity: (_host, cert) => {
-      const actual = (cert.fingerprint256 ?? "")
-        .replace(/:/g, "")
-        .toUpperCase();
-      if (actual !== normalized) {
-        return new Error("Certificate fingerprint mismatch");
-      }
-      return undefined;
-    },
-  });
-}
-
-async function outlineFetch<T>(
-  apiUrl: string,
-  certSha256: string,
-  path: string
-): Promise<T> {
-  const base = apiUrl.replace(/\/$/, "");
-  const agent = buildAgent(certSha256);
-  const { status, data } = await httpsRequest(`${base}${path}`, {
-    method: "GET",
-    agent,
-    headers: { "Content-Type": "application/json" },
-  });
-  if (status < 200 || status >= 300) {
-    throw new Error(`HTTP ${status}`);
-  }
-  return JSON.parse(data) as T;
-}
-
-// ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
-    // Rate limiting: 10 checks per minute per IP
     const ip = getClientIp(req);
-    const rateLimit = await checkRateLimit(ip, "key-check", {
-      requests: 10,
-      window: "1m",
-    });
-
+    const rateLimit = await checkRateLimit(ip, "key-check", { requests: 20, window: "5m" });
     if (!rateLimit.success) {
-      logger.warn({ ip }, "Key check rate limit exceeded");
       return rateLimitResponse(rateLimit.reset);
     }
 
-    // Parse and validate input
-    const body = await parseJsonBody(req);
-    const { ssHost, keyId, password } = keyCheckSchema.parse(body);
-
+    const body = await parseJsonBody<Record<string, unknown>>(req);
     const redis = getRedis();
 
-    // Check cache first
-    const cacheKey = `key-check:${ssHost}:${keyId || password}`;
-    const cached = await redis.get(cacheKey);
+    // ── Path 1: a permanent dynamic key ──────────────────────────────────────
+    // The client may send the whole ssconf:// URL, a bare token, or the legacy
+    // { ssHost, keyId, password } shape whose host is the Worker.
+    const rawInput =
+      typeof body.key === "string"
+        ? body.key
+        : typeof body.ssUrl === "string"
+          ? body.ssUrl
+          : typeof body.token === "string"
+            ? body.token
+            : null;
 
-    if (cached) {
-      logger.debug({ ssHost, keyId }, "Cache hit for key check");
-      return successResponse(cached);
+    const parsedDynamic = rawInput ? parseDynamicUrl(rawInput) : null;
+    const dynamicToken =
+      parsedDynamic?.token ??
+      (typeof body.token === "string" && isValidDynamicToken(body.token) ? body.token : null);
+
+    if (dynamicToken) {
+      return successResponse(await checkDynamicKey(dynamicToken, redis));
     }
 
-    // Load stored servers
-    const stored = ((await redis.get("outline_admin_data")) as StoredData) ?? {
-      servers: [],
-      keyMeta: {},
-    };
-
-    // Find matching server by host
-    const server = stored.servers.find((s) => {
-      try {
-        return new URL(s.apiUrl).hostname === ssHost;
-      } catch {
-        return false;
-      }
-    });
-
-    if (!server) {
-      throw new AppError(
-        `Server ${ssHost} not found. Contact your administrator.`,
-        404,
-        "SERVER_NOT_FOUND"
-      );
-    }
-
-    // Fetch keys + metrics from Outline API
-    const [keysRes, metricsRes] = await Promise.all([
-      outlineFetch<{ accessKeys: AccessKey[] }>(
-        server.apiUrl,
-        server.certSha256,
-        "/access-keys"
-      ),
-      outlineFetch<{ bytesTransferredByUserId: Record<string, number> }>(
-        server.apiUrl,
-        server.certSha256,
-        "/metrics/transfer"
-      ),
-    ]);
-
-    // Match key by ID, password, or accessUrl
-    const found = keysRes.accessKeys.find((k) => {
-      if (keyId && k.id === keyId) return true;
-      if (password && k.password === password) return true;
-      if (password && k.accessUrl.includes(password)) return true;
-      return false;
-    });
-
-    if (!found) {
-      // Log server-side for troubleshooting, but return no details to the
-      // caller: the number of keys on a server is information disclosure on a
-      // public, unauthenticated endpoint.
-      logger.warn(
-        { ssHost, keyId, totalKeys: keysRes.accessKeys.length },
-        "Key not found"
-      );
-      throw new AppError(
-        "Key not found on this server. It may have been deleted.",
-        404,
-        "KEY_NOT_FOUND"
-      );
-    }
-
-    const bytesUsed = metricsRes.bytesTransferredByUserId[found.id] ?? 0;
-    const dataLimit = found.dataLimit?.bytes ?? found.limit?.bytes ?? null;
-    const metaKey = `${server.id}:${found.id}`;
-    const expiryDate = stored.keyMeta[metaKey]?.expiryDate ?? null;
-
-    const response = {
-      serverName: server.name,
-      keyName: found.name || null,
-      keyId: found.id,
-      bytesUsed,
-      dataLimit,
-      expiryDate,
-    };
-
-    // Cache the result
-    await redis.setex(cacheKey, CACHE_TTL, response);
-
-    logger.info({ ssHost, keyId: found.id }, "Key check successful");
-
-    return successResponse(response);
+    // ── Path 2: a legacy raw ss:// key ───────────────────────────────────────
+    const validated = keyCheckSchema.parse(body);
+    return successResponse(await checkLegacyKey(validated, redis));
   } catch (error) {
-    logger.error({ error }, "Key check failed");
     return handleApiError(error);
   }
+}
+
+// ── Permanent key ─────────────────────────────────────────────────────────────
+
+async function checkDynamicKey(
+  token: string,
+  redis: ReturnType<typeof getRedis>
+): Promise<KeyStatusResponse> {
+  const cacheKey = `keycheck:dyn:${token}`;
+  const cached = await redis.get<KeyStatusResponse>(cacheKey);
+  if (cached) return cached;
+
+  const record = await readDynamicRecord(token);
+  if (!record || record.status === "revoked") {
+    // Same message as a wrong key: do not confirm that a token exists.
+    throw new AppError("Key not found. It may have been removed.", 404, "KEY_NOT_FOUND");
+  }
+
+  const servers = await listRegisteredServers();
+  const server = servers.find((s) => s.id === record.serverId);
+
+  const meta = await readKeyMeta(record.serverId, record.outlineKeyId);
+
+  let liveBytes = 0;
+  try {
+    liveBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId);
+  } catch {
+    logger.warn({ dyn: maskId(token) }, "Could not read usage for a dynamic key");
+  }
+
+  const usage = meta ? computeQuotaUsage(meta, liveBytes) : null;
+
+  const response: KeyStatusResponse = {
+    serverName: server?.name ?? "VPN server",
+    keyName: record.name || null,
+    keyId: record.outlineKeyId,
+    bytesUsed: usage?.totalUsedBytes ?? liveBytes,
+    dataLimit: usage?.quotaBytes ?? meta?.quotaBytes ?? null,
+    expiryDate: meta?.expiryDate ?? null,
+    status: record.status,
+    planDescription: meta ? describeQuota(meta) : null,
+    cyclesTotal: meta?.cyclesTotal ?? null,
+    cyclesUsed: meta?.cyclesUsed ?? null,
+    remainingBytes: usage?.remainingBytes ?? null,
+  };
+
+  await redis.setex(cacheKey, CACHE_TTL, response);
+  return response;
+}
+
+// ── Legacy raw key ────────────────────────────────────────────────────────────
+
+async function checkLegacyKey(
+  input: { ssHost: string; keyId?: string; password?: string },
+  redis: ReturnType<typeof getRedis>
+): Promise<KeyStatusResponse> {
+  const cacheKey = `keycheck:ss:${input.ssHost}:${input.keyId ?? ""}:${(input.password ?? "").slice(0, 8)}`;
+  const cached = await redis.get<KeyStatusResponse>(cacheKey);
+  if (cached) return cached;
+
+  const servers = await listRegisteredServers();
+
+  // Match the server by the host embedded in the customer's ss:// URL.
+  const server = servers.find((s) => {
+    try {
+      return new URL(s.apiUrl).hostname === input.ssHost;
+    } catch {
+      return false;
+    }
+  });
+
+  if (!server) {
+    throw new AppError("Server not recognised for this key.", 404, "SERVER_NOT_FOUND");
+  }
+
+  const [keys, metrics] = await Promise.all([
+    listAccessKeys(server.id),
+    getTransferMetrics(server.id),
+  ]);
+
+  const found = keys.find((k: AccessKey) => {
+    if (input.keyId && k.id === input.keyId) return true;
+    if (input.password && k.password === input.password) return true;
+    if (input.password && k.accessUrl?.includes(input.password)) return true;
+    return false;
+  });
+
+  if (!found) {
+    // Key count is logged server-side only; returning it would be information
+    // disclosure on a public endpoint.
+    logger.warn(
+      { ssHost: input.ssHost, totalKeys: keys.length },
+      "Legacy key not found on the matched server"
+    );
+    throw new AppError("Key not found on this server. It may have been deleted.", 404, "KEY_NOT_FOUND");
+  }
+
+  const meta = await readKeyMeta(server.id, found.id);
+  const liveBytes = metrics.bytesTransferredByUserId?.[found.id] ?? 0;
+  const usage = meta ? computeQuotaUsage(meta, liveBytes) : null;
+
+  const response: KeyStatusResponse = {
+    serverName: server.name,
+    keyName: found.name || null,
+    keyId: found.id,
+    bytesUsed: usage?.totalUsedBytes ?? liveBytes,
+    dataLimit:
+      usage?.quotaBytes ?? found.dataLimit?.bytes ?? found.limit?.bytes ?? null,
+    expiryDate: meta?.expiryDate ?? null,
+    planDescription: meta ? describeQuota(meta) : null,
+    cyclesTotal: meta?.cyclesTotal ?? null,
+    cyclesUsed: meta?.cyclesUsed ?? null,
+    remainingBytes: usage?.remainingBytes ?? null,
+  };
+
+  await redis.setex(cacheKey, CACHE_TTL, response);
+  return response;
 }

@@ -9,10 +9,12 @@
 type Hash = Record<string, string>;
 
 interface Entry {
-  type: "hash" | "string" | "set";
+  type: "hash" | "string" | "set" | "zset";
   hash?: Hash;
   str?: string;
   set?: Set<string>;
+  /** member -> score, for sorted sets. */
+  zset?: Map<string, number>;
   expiresAtMs?: number;
 }
 
@@ -69,6 +71,7 @@ export class FakeRedis {
       if (e.hash) parts.push(JSON.stringify(e.hash));
       if (e.str) parts.push(e.str);
       if (e.set) parts.push(Array.from(e.set).join(","));
+      if (e.zset) parts.push(Array.from(e.zset.keys()).join(","));
     });
     return parts.join("\n");
   }
@@ -106,7 +109,35 @@ export class FakeRedis {
   async hget<T = string>(key: string, field: string): Promise<T | null> {
     const h = this.live(key)?.hash;
     if (!h || !(field in h)) return null;
-    return h[field] as unknown as T;
+    const raw = h[field];
+    // Mirror Upstash, which returns numbers for numeric-looking values.
+    if (/^-?\d+$/.test(raw)) return Number(raw) as unknown as T;
+    return raw as unknown as T;
+  }
+
+  async hdel(key: string, ...fields: string[]): Promise<number> {
+    const h = this.live(key)?.hash;
+    if (!h) return 0;
+    let n = 0;
+    for (const f of fields) {
+      if (f in h) {
+        delete h[f];
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  async incr(key: string): Promise<number> {
+    const e = this.live(key);
+    const current = e?.str ? Number(e.str) || 0 : 0;
+    const next = current + 1;
+    this.store.set(key, {
+      type: "string",
+      str: String(next),
+      expiresAtMs: e?.expiresAtMs,
+    });
+    return next;
   }
 
   async hgetall<T = Record<string, string>>(key: string): Promise<T | null> {
@@ -117,10 +148,20 @@ export class FakeRedis {
 
   // ── string commands ─────────────────────────────────────────────────────────
 
-  async set(key: string, value: string, opts?: { ex?: number }): Promise<string> {
+  /**
+   * Mirrors @upstash/redis: non-string values are JSON-serialised, and `nx`
+   * makes the write conditional (which is how the approval lock works).
+   */
+  async set(
+    key: string,
+    value: unknown,
+    opts?: { ex?: number; nx?: boolean }
+  ): Promise<string | null> {
+    if (opts?.nx && this.live(key)) return null;
+
     this.store.set(key, {
       type: "string",
-      str: String(value),
+      str: typeof value === "string" ? value : JSON.stringify(value),
       expiresAtMs: opts?.ex ? Date.now() + opts.ex * 1000 : undefined,
     });
     return "OK";
@@ -193,10 +234,81 @@ export class FakeRedis {
     return e?.set ? Array.from(e.set) : [];
   }
 
-  async setex(key: string, seconds: number, value: unknown): Promise<string> {
+  async setex(key: string, seconds: number, value: unknown): Promise<string | null> {
     return this.set(key, typeof value === "string" ? value : JSON.stringify(value), {
       ex: seconds,
     });
+  }
+
+  // ── sorted sets (the cron due indexes) ──────────────────────────────────────
+
+  async zadd(
+    key: string,
+    ...entries: Array<{ score: number; member: string }>
+  ): Promise<number> {
+    let e = this.live(key);
+    if (!e) {
+      e = { type: "zset", zset: new Map() };
+      this.store.set(key, e);
+    }
+    if (!e.zset) e.zset = new Map();
+
+    let added = 0;
+    for (const { score, member } of entries) {
+      if (!e.zset.has(member)) added += 1;
+      e.zset.set(member, score);
+    }
+    return added;
+  }
+
+  async zrem(key: string, ...members: string[]): Promise<number> {
+    const e = this.live(key);
+    if (!e?.zset) return 0;
+    let n = 0;
+    for (const m of members) if (e.zset.delete(m)) n += 1;
+    return n;
+  }
+
+  async zscore(key: string, member: string): Promise<number | null> {
+    const e = this.live(key);
+    if (!e?.zset) return null;
+    const score = e.zset.get(member);
+    return score === undefined ? null : score;
+  }
+
+  async zcard(key: string): Promise<number> {
+    return this.live(key)?.zset?.size ?? 0;
+  }
+
+  /**
+   * Supports the byScore form used by the cron: members with
+   * min <= score <= max, ascending, optionally windowed.
+   */
+  async zrange(
+    key: string,
+    min: number | string,
+    max: number | string,
+    opts?: { byScore?: boolean; offset?: number; count?: number }
+  ): Promise<string[]> {
+    const e = this.live(key);
+    if (!e?.zset) return [];
+
+    const lo = typeof min === "string" ? Number(min) : min;
+    const hi = typeof max === "string" ? Number(max) : max;
+
+    let entries = Array.from(e.zset.entries()).sort((a, b) => a[1] - b[1]);
+
+    if (opts?.byScore) {
+      entries = entries.filter(([, score]) => score >= lo && score <= hi);
+    } else {
+      const start = lo < 0 ? Math.max(0, entries.length + lo) : lo;
+      const end = hi < 0 ? entries.length + hi : hi;
+      entries = entries.slice(start, end + 1);
+    }
+
+    const offset = opts?.offset ?? 0;
+    const count = opts?.count ?? entries.length;
+    return entries.slice(offset, offset + count).map(([member]) => member);
   }
 
   // ── EVAL ────────────────────────────────────────────────────────────────────
@@ -256,6 +368,44 @@ export class FakeRedis {
       // "ok" (not "verified") so the caller can tell a fresh transition apart
       // from a record that was already verified.
       return "ok";
+    }
+
+    // ── Dynamic identity: guarded status change with rev bump ──
+    if (norm.includes("if ARGV[1] ~= '' and status ~= ARGV[1] then return status end")) {
+      const [expected, next, nowIso, suspendedArg] = a;
+      const h = this.live(keys[0])?.hash;
+      if (!h || h.status === undefined) return "missing";
+      if (expected !== "" && h.status !== expected) return h.status;
+
+      let rev = Number(h.rev ?? "1") || 1;
+      // rev only moves when the public projection actually changes.
+      if (h.status !== next) rev += 1;
+
+      h.status = next;
+      h.rev = String(rev);
+      h.updatedAt = nowIso;
+      if (suspendedArg !== "-") h.suspendedState = suspendedArg;
+      return `ok:${rev}`;
+    }
+
+    // ── Dynamic identity: repoint at a new Outline key (three keys) ──
+    if (norm.includes("redis.call('SET', KEYS[2], ARGV[5])")) {
+      const [destServerId, destKeyId, destAccessUrl, nowIso, token, historyJson, status] = a;
+      const h = this.live(keys[0])?.hash;
+      if (!h || h.status === undefined) return "missing";
+
+      const rev = (Number(h.rev ?? "1") || 1) + 1;
+      h.serverId = destServerId;
+      h.outlineKeyId = destKeyId;
+      h.accessUrl = destAccessUrl;
+      h.updatedAt = nowIso;
+      h.rev = String(rev);
+      h.history = historyJson;
+      h.status = status;
+
+      await this.set(keys[1], token);
+      if (keys[2] !== keys[1]) await this.del(keys[2]);
+      return `ok:${rev}`;
     }
 
     // ── Atomic password write + reset consumption (two keys) ──
