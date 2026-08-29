@@ -100,14 +100,18 @@ export async function sendOrderNotification(
 }
 
 /**
- * Send approval confirmation message
+ * Send approval confirmation with the customer's PERMANENT key.
+ *
+ * Carries the ssconf:// URL, never the raw ss:// access URL. The permanent URL is
+ * what the customer needs, and it stays valid across server migration, quota
+ * changes and renewal — so this message never goes stale.
  */
 export async function sendApprovalConfirmation(
   config: TelegramConfig,
   order: {
     id: string;
     name: string;
-    accessUrl: string;
+    dynamicUrl: string;
   }
 ): Promise<{ ok: boolean; error?: string }> {
   const message: TelegramMessage = {
@@ -115,7 +119,7 @@ export async function sendApprovalConfirmation(
     text:
       `✅ Order Approved\n\n` +
       `👤 Customer: ${order.name}\n` +
-      `🔑 Access Key:\n\n${order.accessUrl}`,
+      `🔑 Permanent Key:\n\n${order.dynamicUrl}`,
   };
 
   const result = await sendTelegramMessage(config.botToken, message);

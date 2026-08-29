@@ -1,0 +1,9 @@
+# Cloudflare Worker sources target the workers runtime, not Next.js.
+# They have their own tsconfig and are linted/type-checked from worker/.
+worker/
+
+# Build output
+.next/
+out/
+build/
+coverage/

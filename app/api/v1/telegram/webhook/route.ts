@@ -18,8 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getRedis } from "@/lib/api-utils";
-import { serverCreateAccessKey, serverSetDataLimit } from "@/lib/outline-server";
+import { approveOrder, rejectOrder, findOrder } from "@/lib/order-approval";
 import {
   sendApprovalConfirmation,
   sendRejectionConfirmation,
@@ -217,24 +216,20 @@ async function handleOrderCallback(ctx: {
 }): Promise<NextResponse> {
   const { botToken, allowedChatId, allowedIds, incomingChatId, callbackId, action, orderId } = ctx;
 
-  const redis = getRedis();
-  const orders = (await redis.get<Order[]>("outline_orders")) ?? [];
-  const order = orders.find((o) => o.id === orderId);
-
+  const order = await findOrder(orderId);
   if (!order) {
     await answerCallback(botToken, callbackId, "⚠️ Order not found");
-    return NextResponse.json({ ok: false });
-  }
-  if (order.status !== "pending") {
-    await answerCallback(botToken, callbackId, "⚠️ Already processed");
     return NextResponse.json({ ok: false });
   }
 
   // ── REJECT ──────────────────────────────────────────────────────────────────
   if (action === "reject") {
-    order.status = "rejected";
-    (order as any).processedAt = Date.now();
-    await redis.set("outline_orders", orders);
+    const result = await rejectOrder(orderId);
+    if (!result.ok) {
+      await answerCallback(botToken, callbackId, `⚠️ ${result.message}`);
+      return NextResponse.json({ ok: false });
+    }
+
     await sendRejectionConfirmation(
       { botToken, chatId: allowedChatId },
       { id: order.id, name: order.name }
@@ -245,85 +240,72 @@ async function handleOrderCallback(ctx: {
   }
 
   // ── APPROVE ─────────────────────────────────────────────────────────────────
-  const rawAdmin = await redis.get<AdminData | string>("outline_admin_data");
-  let adminData: AdminData | null = null;
-  if (typeof rawAdmin === "string") {
-    try {
-      adminData = JSON.parse(rawAdmin);
-    } catch {
-      /* ignore malformed blob */
-    }
-  } else {
-    adminData = rawAdmin;
-  }
+  // Delegates to the SAME engine the dashboard uses, so a Telegram tap racing a
+  // dashboard click cannot produce two Outline keys, and a duplicate tap is a
+  // no-op that reports the existing permanent key.
+  const result = await approveOrder({ orderId, source: "telegram" });
 
-  const servers = adminData?.servers ?? [];
-  if (servers.length === 0) {
-    await answerCallback(botToken, callbackId, "❌ No servers configured!");
-    await sendTelegramMessage(botToken, {
-      chat_id: allowedChatId,
-      text: "❌ No servers configured. Add one in the admin dashboard.",
-    });
+  if (!result.ok) {
+    const friendly =
+      result.code === "APPROVAL_IN_PROGRESS"
+        ? "⏳ Already being approved"
+        : result.code === "ALREADY_PROCESSED"
+          ? "⚠️ Already processed"
+          : result.code === "NEEDS_RECONCILIATION"
+            ? "⚠️ Needs manual review"
+            : result.code === "NO_SERVERS"
+              ? "❌ No servers configured"
+              : "❌ Failed to create key";
+
+    await answerCallback(botToken, callbackId, friendly);
+
+    // Only escalate genuine failures into the chat, not benign double-taps.
+    if (result.code !== "APPROVAL_IN_PROGRESS" && result.code !== "ALREADY_PROCESSED") {
+      await sendTelegramMessage(botToken, {
+        chat_id: allowedChatId,
+        text: `❌ Could not approve order for ${order.name}.\n${result.message}`,
+      });
+    }
+
+    logger.warn({ orderId, code: result.code }, "Telegram approval did not complete");
     return NextResponse.json({ ok: false });
   }
 
-  const targetServer: OutlineServer =
-    (order.serverId ? servers.find((s) => s.id === order.serverId) : undefined) ?? servers[0];
+  if (result.reconciled) {
+    // A previous attempt had already created everything.
+    await answerCallback(botToken, callbackId, "✅ Already approved");
+    return NextResponse.json({ ok: true });
+  }
 
-  try {
-    const key = await serverCreateAccessKey(
-      targetServer.apiUrl,
-      targetServer.certSha256,
-      order.name
-    );
+  await sendApprovalConfirmation(
+    { botToken, chatId: allowedChatId },
+    { id: order.id, name: order.name, dynamicUrl: result.dynamicUrl }
+  );
 
-    const dataLimitBytes = getPlanBytes(order.plan, order.customDataLimitGB);
-    if (dataLimitBytes) {
-      await serverSetDataLimit(
-        targetServer.apiUrl,
-        targetServer.certSha256,
-        key.id,
-        dataLimitBytes
-      );
+  for (const adminId of allowedIds) {
+    if (adminId !== incomingChatId) {
+      await sendTelegramMessage(botToken, {
+        chat_id: adminId,
+        text: `✅ Order approved by another admin\n\n👤 Customer: ${order.name}`,
+      });
     }
+  }
 
-    order.status = "approved";
-    order.accessUrl = key.accessUrl;
-    order.serverId = targetServer.id;
-    order.keyId = key.id;
-    (order as any).processedAt = Date.now();
-    await redis.set("outline_orders", orders);
+  await answerCallback(botToken, callbackId, "✅ Approved!");
 
-    await sendApprovalConfirmation(
-      { botToken, chatId: allowedChatId },
-      { id: order.id, name: order.name, accessUrl: key.accessUrl }
-    );
-
-    for (const adminId of allowedIds) {
-      if (adminId !== incomingChatId) {
-        await sendTelegramMessage(botToken, {
-          chat_id: adminId,
-          text: `✅ Order approved by another admin\n\n👤 Customer: ${order.name}\n🔑 Key created on: ${targetServer.name}`,
-        });
-      }
-    }
-
-    await answerCallback(botToken, callbackId, "✅ Approved!");
-    // serverId is safe to log; apiUrl/certSha256/accessUrl are not.
-    logger.info(
-      { orderId, serverId: targetServer.id, keyId: key.id },
-      "Order approved via Telegram"
-    );
-  } catch (error) {
-    // The upstream error message can contain the Outline management URL.
-    // Log it through the redacting logger and never forward it to Telegram.
-    logger.error({ error, orderId, serverId: targetServer.id }, "Key creation failed");
-    await answerCallback(botToken, callbackId, "❌ Failed to create key");
+  if (result.syncPending) {
     await sendTelegramMessage(botToken, {
       chat_id: allowedChatId,
-      text: `❌ Failed to create key for ${order.name}. Check the server logs for details.`,
+      text:
+        `⚠️ Key created for ${order.name}, but the edge config sync is pending.\n` +
+        `It will retry automatically within the hour.`,
     });
   }
+
+  logger.info(
+    { orderId, serverId: result.serverId, keyId: result.outlineKeyId },
+    "Order approved via Telegram"
+  );
 
   return NextResponse.json({ ok: true });
 }

@@ -1,0 +1,30 @@
+# Scheduled trigger Worker.
+#
+# Separate from outline-config on purpose: this one holds CRON_SECRET, and the
+# public config resolver must keep holding zero secrets.
+#
+# Deploy:
+#   cd worker
+#   npx wrangler deploy --config wrangler.cron.toml
+#   npx wrangler secret put CRON_SECRET --config wrangler.cron.toml
+#
+# Set ROLLOVER_URL below to your deployed Vercel domain before deploying.
+
+name = "outline-cron"
+main = "src/cron.ts"
+compatibility_date = "2026-01-01"
+workers_dev = false
+
+# Hourly. Bounds worst-case cycle-rollover delay to one hour, which matters
+# because a late rollover means a customer stays blocked past their reset.
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+ROLLOVER_URL = "https://REPLACE_WITH_YOUR_VERCEL_DOMAIN/api/v1/cron/tick"
+
+# No KV binding and no Outline access: this Worker only triggers Vercel.
+# CRON_SECRET is set via `wrangler secret put`, never in this file.
+
+[observability]
+enabled = true

@@ -21,6 +21,7 @@ import {
 import { createOrderSchema } from "@/lib/validation";
 import { createLogger } from "@/lib/logger";
 import { sendOrderNotification } from "@/lib/telegram";
+import { issueClaimToken } from "@/lib/order-claim";
 import { randomBytes } from "crypto";
 import type { Order } from "@/lib/types";
 
@@ -118,6 +119,12 @@ export async function POST(req: NextRequest) {
       approvedAt: null,
     };
 
+    // Mint the customer's claim credential. The raw token is returned exactly
+    // once below and never stored; only its SHA-256 lives on the order, so the
+    // order id by itself is not a credential.
+    const claim = await issueClaimToken(order.id);
+    order.claimHash = claim.claimHash;
+
     orders.push(order);
     await saveOrders(redis, orders);
 
@@ -156,7 +163,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return successResponse({ id: order.id }, 201);
+    // claimToken is returned ONCE. The client must keep it to check status.
+    return successResponse({ id: order.id, claimToken: claim.claimToken }, 201);
   } catch (error) {
     return handleApiError(error);
   }

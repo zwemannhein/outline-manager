@@ -1,62 +1,28 @@
 /**
- * GET /api/v1/orders/[id]/status — Check order status (public, rate-limited)
+ * GET /api/v1/orders/[id]/status — REMOVED (410 Gone).
+ *
+ * This endpoint returned the customer's key material to anyone who knew or
+ * guessed an order id. Order ids are `ord_<timestamp>_<random>`, and the
+ * timestamp component is highly predictable, so the id was never a sound
+ * credential. With permanent dynamic keys the exposure would have been worse: the
+ * ssconf:// URL survives server migration and quota changes, so a single leak
+ * would be permanent rather than limited to one key.
+ *
+ * Replacement: POST /api/v1/orders/status with a 128-bit claim token that is
+ * issued once at order creation and stored only as a SHA-256 hash.
+ *
+ * Kept as an explicit 410 with access logging rather than deleted, so any
+ * lingering client surfaces in the logs instead of failing mysteriously.
  */
 
 export const runtime = "nodejs";
 
 import { NextRequest } from "next/server";
-import {
-  getRedis,
-  checkRateLimit,
-  getClientIp,
-  handleApiError,
-  successResponse,
-  rateLimitResponse,
-  AppError,
-} from "@/lib/api-utils";
-import { createLogger } from "@/lib/logger";
-import type { Order } from "@/lib/types";
+import { goneResponse } from "@/lib/deprecated-route";
 
-const logger = createLogger("orders");
-const ORDERS_KEY = "outline_orders";
-
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    // Rate limiting: 20 checks per minute per IP
-    const ip = getClientIp(req);
-    const rateLimit = await checkRateLimit(ip, "order-status", {
-      requests: 20,
-      window: "1m",
-    });
-
-    if (!rateLimit.success) {
-      logger.warn({ ip }, "Order status rate limit exceeded");
-      return rateLimitResponse(rateLimit.reset);
-    }
-
-    const redis = getRedis();
-    const orders = ((await redis.get(ORDERS_KEY)) as Order[]) ?? [];
-    const order = orders.find((o) => o.id === params.id);
-
-    if (!order) {
-      throw new AppError("Order not found", 404, "ORDER_NOT_FOUND");
-    }
-
-    // Return safe public info
-    const response = {
-      id: order.id,
-      status: order.status,
-      plan: order.plan,
-      name: order.name,
-      createdAt: order.createdAt,
-      accessUrl: order.status === "approved" ? order.accessUrl : null,
-    };
-
-    return successResponse(response);
-  } catch (error) {
-    return handleApiError(error);
-  }
+export async function GET(req: NextRequest) {
+  return goneResponse(req, {
+    route: "/api/v1/orders/[id]/status",
+    replacement: "/api/v1/orders/status",
+  });
 }

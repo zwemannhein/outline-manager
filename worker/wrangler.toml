@@ -1,0 +1,38 @@
+# Cloudflare Workers configuration.
+#
+# Two Workers, both on the free plan:
+#
+#   outline-config  public config resolver. ZERO secrets, one read KV binding.
+#   outline-cron    hourly trigger that POSTs to the Vercel cron endpoint.
+#
+# This file contains no secrets and is safe to commit. Secrets are set with
+# `wrangler secret put` and live only in Cloudflare.
+#
+# Deploy:
+#   cd worker
+#   npx wrangler kv namespace create outline-dynamic-keys
+#   npx wrangler kv namespace create outline-dynamic-keys --preview
+#   # paste the returned ids into [[kv_namespaces]] below, then:
+#   npx wrangler deploy
+#   npx wrangler deploy --config wrangler.cron.toml
+
+name = "outline-config"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+workers_dev = true
+
+# Read binding for the dynamic projection namespace.
+# Replace the placeholder ids after creating the namespace.
+[[kv_namespaces]]
+binding = "DYN"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
+
+[vars]
+# Leave "false" unless real Outline client testing proves the OUTER ssconf
+# fragment is ignored and the customer name must be injected into the inner
+# ss:// URL instead.
+DYNAMIC_KEY_INNER_FRAGMENT = "false"
+
+[observability]
+enabled = true

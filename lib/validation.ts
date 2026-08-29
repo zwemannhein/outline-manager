@@ -106,6 +106,73 @@ export const resetPasswordSchema = z.object({
   newPassword: newPasswordSchema,
 });
 
+// ── Dynamic access key / VPN core ──────────────────────────────────────────────
+
+const dynamicTokenSchema = z
+  .string()
+  .regex(/^[0-9a-f]{32}$/, "Invalid dynamic token");
+
+/** Customer order status lookup. Keyed on the claim token, never the order id. */
+export const orderStatusSchema = z.object({
+  claimToken: z.string().regex(/^[0-9a-f]{32}$/, "Invalid claim token"),
+});
+
+export const approveOrderSchema = z.object({
+  serverId: z.string().min(1).optional().nullable(),
+});
+
+/** Admin: disable a customer identity. */
+export const disableDynamicSchema = z.object({
+  token: dynamicTokenSchema,
+  reason: z.enum(["manual", "expiry"]).optional(),
+});
+
+export const enableDynamicSchema = z.object({
+  token: dynamicTokenSchema,
+  /** Optional destination when the underlying key must be recreated. */
+  serverId: z.string().min(1).optional().nullable(),
+});
+
+/** Admin: move a customer to a different Outline server. */
+export const migrateDynamicSchema = z.object({
+  token: dynamicTokenSchema,
+  destServerId: z.string().min(1, "Destination server is required"),
+  /**
+   * Emergency override for server decommission. Without it, migrating a
+   * customer whose cycle quota is already exhausted returns 409.
+   */
+  allowExhausted: z.boolean().optional(),
+});
+
+export const migrateCleanupSchema = z.object({
+  token: dynamicTokenSchema,
+});
+
+/** Admin: extend a subscription without changing the permanent URL. */
+export const renewDynamicSchema = z.object({
+  token: dynamicTokenSchema,
+  additionalCycles: z.number().int().min(1).max(24),
+});
+
+/** Admin: change the per-cycle quota. Must not alter the permanent URL. */
+export const updateQuotaSchema = z.object({
+  token: dynamicTokenSchema,
+  /** null = unlimited. */
+  quotaGB: z.number().min(0).max(100000).nullable(),
+});
+
+export const keyMetaPatchSchema = z.object({
+  expiryDate: z.string().datetime().nullable().optional(),
+  quotaBytes: z.number().int().min(0).nullable().optional(),
+  cyclesTotal: z.number().int().min(1).max(60).optional(),
+});
+
+export const backfillSchema = z.object({
+  dryRun: z.boolean().optional(),
+  /** Bound the work per invocation so a run cannot exhaust the KV write budget. */
+  limit: z.number().int().min(1).max(500).optional(),
+});
+
 /**
  * First-run password setup. Takes no current password: the caller already proved
  * possession of the bootstrap password and passed Telegram approval to obtain
