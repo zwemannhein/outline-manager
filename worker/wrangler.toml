@@ -25,8 +25,8 @@ workers_dev = true
 # Replace the placeholder ids after creating the namespace.
 [[kv_namespaces]]
 binding = "DYN"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
+id = "0bb6f8dd372d4d90ae880d0718f143ff"
+preview_id = "d64c3e35b6494696b512a7e8e24c4c23"
 
 [vars]
 # Leave "false" unless real Outline client testing proves the OUTER ssconf
