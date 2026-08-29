@@ -170,15 +170,17 @@ export async function POST(req: NextRequest) {
     });
 
     if (!found) {
-      logger.warn({ ssHost, keyId }, "Key not found");
+      // Log server-side for troubleshooting, but return no details to the
+      // caller: the number of keys on a server is information disclosure on a
+      // public, unauthenticated endpoint.
+      logger.warn(
+        { ssHost, keyId, totalKeys: keysRes.accessKeys.length },
+        "Key not found"
+      );
       throw new AppError(
         "Key not found on this server. It may have been deleted.",
         404,
-        "KEY_NOT_FOUND",
-        {
-          searchedKeyId: keyId ?? null,
-          totalKeys: keysRes.accessKeys.length,
-        }
+        "KEY_NOT_FOUND"
       );
     }
 

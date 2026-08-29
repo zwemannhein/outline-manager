@@ -9,11 +9,22 @@ import type {
   TransferMetrics,
   ProxyRequest,
 } from "./types";
+import { getAuthHeader } from "./sync";
 
 async function proxyFetch<T>(req: Omit<ProxyRequest, never>): Promise<T> {
+  // /api/outline requires an authenticated admin session. Fail fast with a
+  // clear message rather than sending an unauthenticated request.
+  const auth = getAuthHeader();
+  if (!auth) {
+    throw new Error("Not signed in as admin. Please sign in again.");
+  }
+
   const res = await fetch("/api/outline", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: auth,
+    },
     body: JSON.stringify(req),
   });
 

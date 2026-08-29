@@ -13,18 +13,26 @@ import {
   handleApiError,
   successResponse,
   unauthorizedResponse,
+  checkRateLimit,
+  rateLimitResponse,
+  getClientIp,
   AppError,
 } from "@/lib/api-utils";
 import { createOrderSchema } from "@/lib/validation";
 import { createLogger } from "@/lib/logger";
 import { sendOrderNotification } from "@/lib/telegram";
+import { randomBytes } from "crypto";
 import type { Order } from "@/lib/types";
 
 const logger = createLogger("orders");
 const ORDERS_KEY = "outline_orders";
 
+/**
+ * Order id. Uses crypto randomness rather than Math.random so the identifier
+ * is not predictable from the creation timestamp.
+ */
 function generateOrderId(): string {
-  return "ord_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
+  return "ord_" + Date.now() + "_" + randomBytes(8).toString("hex");
 }
 
 async function loadOrders(redis: ReturnType<typeof getRedis>): Promise<Order[]> {
@@ -64,6 +72,18 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Rate limiting: 3 order submissions per hour per IP
+    const ip = getClientIp(req);
+    const rateLimit = await checkRateLimit(ip, "order-create", {
+      requests: 3,
+      window: "1h",
+    });
+
+    if (!rateLimit.success) {
+      logger.warn({ ip }, "Order creation rate limit exceeded");
+      return rateLimitResponse(rateLimit.reset);
+    }
+
     // Parse and validate input
     const body = await parseJsonBody(req);
     const validated = createOrderSchema.parse(body);

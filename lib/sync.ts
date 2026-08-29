@@ -47,6 +47,15 @@ function makeAuthHeader(): string {
   return token ? `Bearer ${token}` : "";
 }
 
+/**
+ * Public accessor for the admin Authorization header.
+ * Used by lib/outline-client.ts so that /api/outline calls are authenticated.
+ * Returns an empty string when no admin session exists.
+ */
+export function getAuthHeader(): string {
+  return makeAuthHeader();
+}
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 export async function login(username: string, password: string): Promise<void> {

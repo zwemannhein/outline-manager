@@ -84,6 +84,11 @@ export const envSchema = z.object({
   KV_REST_API_TOKEN: z.string().optional(),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  // Telegram. TELEGRAM_WEBHOOK_SECRET is optional so existing deployments keep
+  // working, but when present the webhook enforces it on every delivery.
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(16).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,11 +1,16 @@
 /**
- * /api/outline  — Serverless proxy for Outline Management API
+ * /api/outline  — Serverless proxy for the Outline Management API
  *
  * Accepts POST with JSON body:
  *   { apiUrl, certSha256, method, path, body? }
  *
- * Uses a custom https.Agent that validates the server's self-signed cert
- * against the provided SHA-256 fingerprint instead of the system CA store.
+ * SECURITY MODEL
+ *  - Requires a valid admin JWT (Authorization: Bearer <token>).
+ *  - The supplied (apiUrl, certSha256) pair MUST match a server already
+ *    registered in the server-side admin data store. Arbitrary values from the
+ *    browser are rejected, which closes the SSRF hole and prevents this route
+ *    being used as a generic Outline management client.
+ *  - Nothing about the target URL or the upstream response body is ever logged.
  *
  * Node.js runtime is required (not Edge) because we use the `https` module.
  */
@@ -15,6 +20,12 @@ export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import https from "https";
 import type { IncomingMessage } from "http";
+import { checkAuth, getRedis, unauthorizedResponse } from "@/lib/api-utils";
+import { createLogger } from "@/lib/logger";
+import type { OutlineServer } from "@/lib/types";
+
+const logger = createLogger("outline-proxy");
+const ADMIN_DATA_KEY = "outline_admin_data";
 
 interface ProxyRequestBody {
   apiUrl: string;
@@ -23,6 +34,21 @@ interface ProxyRequestBody {
   path: string;
   body?: unknown;
 }
+
+interface AdminData {
+  servers: OutlineServer[];
+}
+
+/** Only these Outline management paths may be proxied. */
+const ALLOWED_PATH_PATTERNS: RegExp[] = [
+  /^\/server$/,
+  /^\/server\/(hostname-for-access-keys|port-for-new-access-keys|access-key-data-limit)$/,
+  /^\/access-keys$/,
+  /^\/access-keys\/[A-Za-z0-9_-]+$/,
+  /^\/access-keys\/[A-Za-z0-9_-]+\/(name|data-limit)$/,
+  /^\/metrics\/transfer$/,
+  /^\/metrics\/enabled$/,
+];
 
 /** Perform an HTTPS request and return { status, data } */
 function httpsRequest(
@@ -49,24 +75,37 @@ function buildAgent(expectedSha256: string): https.Agent {
   return new https.Agent({
     rejectUnauthorized: false, // we do manual fingerprint check below
     checkServerIdentity: (_host, cert) => {
-      // cert.fingerprint256 is "AA:BB:CC:..." format
-      const actual = (cert.fingerprint256 ?? "")
-        .replace(/:/g, "")
-        .toUpperCase();
+      const actual = (cert.fingerprint256 ?? "").replace(/:/g, "").toUpperCase();
 
       if (actual !== normalized) {
-        return new Error(
-          `Certificate fingerprint mismatch.\nExpected: ${normalized}\nGot:      ${actual}`
-        );
+        // Deliberately does not include either fingerprint in the message.
+        return new Error("Certificate fingerprint mismatch");
       }
       return undefined; // OK
     },
   });
 }
 
-export async function POST(req: NextRequest) {
-  let body: ProxyRequestBody;
+/** Load the registered servers that act as the proxy allow-list. */
+async function loadRegisteredServers(): Promise<OutlineServer[]> {
+  const redis = getRedis();
+  const raw = await redis.get<AdminData | string>(ADMIN_DATA_KEY);
+  if (!raw) return [];
 
+  const parsed: AdminData | null =
+    typeof raw === "string" ? (JSON.parse(raw) as AdminData) : raw;
+
+  return Array.isArray(parsed?.servers) ? parsed.servers : [];
+}
+
+export async function POST(req: NextRequest) {
+  // ── 1. Require an authenticated admin ───────────────────────────────────────
+  const auth = await checkAuth(req);
+  if (!auth.authenticated) {
+    return unauthorizedResponse();
+  }
+
+  let body: ProxyRequestBody;
   try {
     body = (await req.json()) as ProxyRequestBody;
   } catch {
@@ -82,32 +121,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate method
-  const allowedMethods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-  if (!allowedMethods.includes(method.toUpperCase())) {
+  // ── 2. Validate the HTTP method ─────────────────────────────────────────────
+  const allowedMethods = ["GET", "POST", "PUT", "DELETE"];
+  const upperMethod = method.toUpperCase();
+  if (!allowedMethods.includes(upperMethod)) {
     return NextResponse.json({ error: "Method not allowed" }, { status: 405 });
   }
 
-  // Build target URL — strip trailing slash from apiUrl, ensure path starts with /
-  const base = apiUrl.replace(/\/$/, "");
+  // ── 3. Validate the requested path against the allow-list ───────────────────
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const targetUrl = `${base}${normalizedPath}`;
+  if (normalizedPath.includes("..") || !ALLOWED_PATH_PATTERNS.some((re) => re.test(normalizedPath))) {
+    logger.warn({ username: auth.username }, "Rejected disallowed Outline path");
+    return NextResponse.json({ error: "Path not allowed" }, { status: 403 });
+  }
+
+  // ── 4. Allow-list the target server (blocks SSRF / arbitrary apiUrl) ────────
+  let registered: OutlineServer[];
+  try {
+    registered = await loadRegisteredServers();
+  } catch {
+    logger.error({ username: auth.username }, "Failed to load server allow-list");
+    return NextResponse.json({ error: "Server registry unavailable" }, { status: 503 });
+  }
+
+  const suppliedUrl = apiUrl.replace(/\/+$/, "");
+  const suppliedFp = certSha256.replace(/:/g, "").toUpperCase();
+
+  const match = registered.find(
+    (s) =>
+      s.apiUrl?.replace(/\/+$/, "") === suppliedUrl &&
+      s.certSha256?.replace(/:/g, "").toUpperCase() === suppliedFp
+  );
+
+  if (!match) {
+    // Never echo the rejected apiUrl back to the caller or into logs.
+    logger.warn(
+      { username: auth.username, registeredCount: registered.length },
+      "Rejected Outline proxy request for an unregistered server"
+    );
+    return NextResponse.json(
+      { error: "Target server is not registered" },
+      { status: 403 }
+    );
+  }
+
+  const targetUrl = `${suppliedUrl}${normalizedPath}`;
 
   let agent: https.Agent;
   try {
     agent = buildAgent(certSha256);
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Failed to build TLS agent: ${String(err)}` },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: "Failed to build TLS agent" }, { status: 500 });
   }
 
   const serializedBody =
     requestBody !== undefined ? JSON.stringify(requestBody) : undefined;
 
   const options: https.RequestOptions = {
-    method: method.toUpperCase(),
+    method: upperMethod,
     agent,
     headers: {
       "Content-Type": "application/json",
@@ -120,8 +191,11 @@ export async function POST(req: NextRequest) {
   try {
     const { status, data } = await httpsRequest(targetUrl, options, serializedBody);
 
-    // Log for debugging
-    console.log(`[outline-proxy] ${method} ${targetUrl} → ${status}`, data.slice(0, 200));
+    // Log the operation WITHOUT the target URL, request body, or response body.
+    logger.info(
+      { username: auth.username, serverId: match.id, method: upperMethod, status },
+      "Outline proxy request completed"
+    );
 
     // 204 No Content and other no-body success codes — return empty response
     const NO_BODY_STATUSES = [204, 205, 304];
@@ -129,7 +203,6 @@ export async function POST(req: NextRequest) {
       return new Response(null, { status });
     }
 
-    // Parse JSON if possible, otherwise return raw text
     let parsed: unknown;
     try {
       parsed = data.trim() ? JSON.parse(data) : {};
@@ -138,12 +211,12 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(parsed, { status });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[outline-proxy] Request failed:", message);
-    return NextResponse.json(
-      { error: `Proxy request failed: ${message}` },
-      { status: 502 }
+  } catch {
+    // The underlying error can contain the target URL — do not log or return it.
+    logger.error(
+      { username: auth.username, serverId: match.id, method: upperMethod },
+      "Outline proxy request failed"
     );
+    return NextResponse.json({ error: "Proxy request failed" }, { status: 502 });
   }
 }
