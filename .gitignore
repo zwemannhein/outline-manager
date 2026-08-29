@@ -11,11 +11,15 @@ out/
 build/
 
 # env — never commit secrets
+# Deny-all, then allow only the placeholder template.
+# This intentionally covers .env.production, .env.local, .env.development,
+# .env.test and any future variant, so a new env file is ignored by default.
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+
+# local credential/setup notes — may contain real values
+get-credentials.md
 
 # misc
 .DS_Store
@@ -26,3 +30,15 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# testing
+coverage/
+.vitest/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# logs
+logs/
+*.log
