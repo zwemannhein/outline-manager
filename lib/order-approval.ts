@@ -338,7 +338,7 @@ export async function approveOrder(options: ApproveOptions): Promise<ApprovalRes
             { orderId, dyn: maskId(existingToken), source },
             "Approval reconciled against existing identity"
           );
-          return finaliseWithExistingIdentity(order, record, orders, terms);
+          return await finaliseWithExistingIdentity(order, record, orders, terms);
         }
 
         // The key was deleted out of band. Recreate it but REUSE the token so the
@@ -347,7 +347,7 @@ export async function approveOrder(options: ApproveOptions): Promise<ApprovalRes
           { orderId, dyn: maskId(existingToken) },
           "Existing identity points at a missing Outline key; recreating under the same token"
         );
-        return createKeyAndCommit({
+        return await createKeyAndCommit({
           order,
           orders,
           terms,
@@ -388,7 +388,7 @@ export async function approveOrder(options: ApproveOptions): Promise<ApprovalRes
           { orderId, dyn: maskId(intent.token), keyId: adopted.id },
           "Adopting orphaned Outline key from an interrupted approval"
         );
-        return adoptExistingKey({
+        return await adoptExistingKey({
           order,
           orders,
           terms,
@@ -418,7 +418,7 @@ export async function approveOrder(options: ApproveOptions): Promise<ApprovalRes
       }
 
       // Zero candidates: nothing was created. Reuse the reserved token.
-      return createKeyAndCommit({
+      return await createKeyAndCommit({
         order,
         orders,
         terms,
@@ -442,7 +442,7 @@ export async function approveOrder(options: ApproveOptions): Promise<ApprovalRes
     }
 
     // ── 3. Fresh approval ───────────────────────────────────────────────────
-    return createKeyAndCommit({
+    return await createKeyAndCommit({
       order,
       orders,
       terms,

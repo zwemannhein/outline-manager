@@ -27,9 +27,23 @@
  * credentials when fetching a remote config.
  */
 
+/**
+ * The slice of Cloudflare's KVNamespace this Worker actually uses.
+ *
+ * Declared locally rather than pulled from @cloudflare/workers-types so the file
+ * type-checks both under worker/tsconfig.json and from the Next.js test suite,
+ * without needing the Cloudflare types installed at the repository root.
+ */
+export interface KvReadNamespace {
+  get<T = unknown>(
+    key: string,
+    options?: { type?: "json" | "text"; cacheTtl?: number }
+  ): Promise<T | null>;
+}
+
 export interface Env {
   /** Read binding for the dynamic projection namespace. */
-  DYN: KVNamespace;
+  DYN: KvReadNamespace;
   /**
    * "true" makes the Worker rewrite the inner ss:// fragment with the customer
    * name. Default OFF — the outer ssconf fragment is expected to carry it, and
