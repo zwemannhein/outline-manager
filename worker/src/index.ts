@@ -63,8 +63,9 @@ interface DynamicProjection {
   name?: string;
 }
 
-const TOKEN_PATTERN = /^\/k\/([0-9a-f]{32})$/;
-const DIAG_PATTERN  = /^\/diag\/([0-9a-f]{32})$/;
+const TOKEN_PATTERN  = /^\/k\/([0-9a-f]{32})$/;
+const DIAG_PATTERN   = /^\/diag\/([0-9a-f]{32})$/;
+const DIAG_K_PATTERN = /^\/diag-k\/([0-9a-f]{32})$/;
 
 /**
  * Parse an ss:// URL into its components for the JSON diagnostic endpoint.
@@ -179,11 +180,36 @@ export default {
           headers: { "Content-Type": "application/json; charset=utf-8", ...NO_STORE },
         });
       }
+
+      // ── /diag-k/<token>: same /k/ lookup, same /diag/ response path ─────────
+      // Lets us verify whether the /k/ path itself is the issue when the two
+      // responses are otherwise identical.
+      const diagKMatch = DIAG_K_PATTERN.exec(pathname);
+      if (diagKMatch) {
+        const diagKToken = diagKMatch[1];
+        let diagKProjection: DynamicProjection | null = null;
+        try {
+          diagKProjection = await env.DYN.get<DynamicProjection>(`dyn:${diagKToken}`, {
+            type: "json",
+            cacheTtl: 60,
+          });
+        } catch {
+          return new Response(null, { status: 503, headers: { ...NO_STORE } });
+        }
+        if (!diagKProjection || diagKProjection.status !== "active" || !diagKProjection.accessUrl) {
+          return notFound();
+        }
+        const parsedK = parseSsUrl(diagKProjection.accessUrl);
+        if (!parsedK) return notFound();
+        return new Response(JSON.stringify(parsedK), {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8", ...NO_STORE },
+        });
+      }
+
       // Includes uppercase hex and wrong-length tokens.
       return notFound();
-    }
-
-    const token = match[1];
+    }    const token = match[1];
 
     let projection: DynamicProjection | null = null;
     try {
