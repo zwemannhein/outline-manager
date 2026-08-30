@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import {
-  Trash2, Edit2, BarChart2, Plus, Copy, Check,
+  Trash2, Edit2, BarChart2, Plus,
   CalendarClock, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,26 +21,6 @@ interface KeyTableProps {
   onSetExpiry: (keyId: string, currentExpiry: string | null) => void;
   onCreateKey: () => void;
   loading: boolean;
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={() => {
-        navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-      title="Copy access URL"
-    >
-      {copied
-        ? <Check className="w-3.5 h-3.5 text-emerald-500" />
-        : <Copy className="w-3.5 h-3.5" />}
-    </button>
-  );
 }
 
 function expiryStatus(isoDate: string | null) {
@@ -113,7 +93,6 @@ export function KeyTable({
                           </p>
                           <p className="text-xs text-muted-foreground">ID: {key.id}</p>
                         </div>
-                        <CopyButton text={key.accessUrl} />
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -188,7 +167,6 @@ export function KeyTable({
                   </p>
                   <p className="text-xs text-muted-foreground">ID: {key.id}</p>
                 </div>
-                <CopyButton text={key.accessUrl} />
               </div>
 
               {/* Data usage */}

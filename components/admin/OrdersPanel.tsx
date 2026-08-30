@@ -22,7 +22,7 @@ function CopyButton({ text }: { text: string }) {
         setCopied(true); setTimeout(() => setCopied(false), 1500);
       })}
       className="text-muted-foreground hover:text-foreground transition-colors"
-      title="Copy access URL"
+      title="Copy permanent key"
     >
       {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
     </button>
