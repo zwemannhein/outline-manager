@@ -64,6 +64,32 @@ interface DynamicProjection {
 }
 
 const TOKEN_PATTERN = /^\/k\/([0-9a-f]{32})$/;
+const DIAG_PATTERN  = /^\/diag\/([0-9a-f]{32})$/;
+
+/**
+ * Parse an ss:// URL into its components for the JSON diagnostic endpoint.
+ * Returns null if the URL is not a well-formed ss:// URL.
+ *
+ * Handles:  ss://<base64(method:password)>@host:port[/][?outline=1]
+ */
+function parseSsUrl(ssUrl: string): { server: string; server_port: number; method: string; password: string } | null {
+  const m = /^ss:\/\/([A-Za-z0-9+/=]+)@([\d.]+):(\d+)/.exec(ssUrl);
+  if (!m) return null;
+  let decoded: string;
+  try {
+    decoded = atob(m[1]);
+  } catch {
+    return null;
+  }
+  const colon = decoded.indexOf(":");
+  if (colon === -1) return null;
+  return {
+    method: decoded.slice(0, colon),
+    password: decoded.slice(colon + 1),
+    server: m[2],
+    server_port: Number(m[3]),
+  };
+}
 
 const NO_STORE: Record<string, string> = {
   "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -126,6 +152,33 @@ export default {
 
     const match = TOKEN_PATTERN.exec(pathname);
     if (!match) {
+      // ── Diagnostic JSON endpoint (/diag/<token>) ──────────────────────────
+      // Returns the same data as /k/<token> but in the official Outline JSON
+      // format. Useful for testing whether a client needs JSON vs plain-text.
+      // Uses identical KV lookup and access control as the main endpoint.
+      const diagMatch = DIAG_PATTERN.exec(pathname);
+      if (diagMatch) {
+        const diagToken = diagMatch[1];
+        let diagProjection: DynamicProjection | null = null;
+        try {
+          diagProjection = await env.DYN.get<DynamicProjection>(`dyn:${diagToken}`, {
+            type: "json",
+            cacheTtl: 60,
+          });
+        } catch {
+          return new Response(null, { status: 503, headers: { ...NO_STORE } });
+        }
+        if (!diagProjection || diagProjection.status !== "active" || !diagProjection.accessUrl) {
+          return notFound();
+        }
+        const parsed = parseSsUrl(diagProjection.accessUrl);
+        if (!parsed) return notFound();
+        const json = JSON.stringify(parsed);
+        return new Response(json, {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8", ...NO_STORE },
+        });
+      }
       // Includes uppercase hex and wrong-length tokens.
       return notFound();
     }
@@ -150,14 +203,13 @@ export default {
       return notFound();
     }
 
-    const body =
-      env.DYNAMIC_KEY_INNER_FRAGMENT === "true"
-        ? withFragment(projection.accessUrl, projection.name)
-        : projection.accessUrl;
+    // Parse the stored ss:// URL into the official Outline JSON format.
+    // JSON is required by current Outline clients; plain-text ss:// is legacy.
+    const parsed = parseSsUrl(projection.accessUrl);
+    if (!parsed) return notFound();
 
-    return new Response(body, {
+    return new Response(JSON.stringify(parsed), {
       status: 200,
-      headers: { "Content-Type": "text/plain;charset=utf-8", ...NO_STORE },
-    });
-  },
+      headers: { "Content-Type": "application/json; charset=utf-8", ...NO_STORE },
+    });  },
 };
