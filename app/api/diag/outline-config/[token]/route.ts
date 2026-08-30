@@ -64,6 +64,6 @@ export async function GET(
 
   return NextResponse.json(parsed, {
     status: 200,
-    headers: NO_STORE,
+    headers: { ...NO_STORE, "Content-Type": "application/json; charset=utf-8" },
   });
 }
