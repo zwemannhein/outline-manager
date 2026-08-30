@@ -663,3 +663,53 @@ export async function fetchOrderStatus(claimToken: string): Promise<OrderStatusR
 
   return (await res.json()) as OrderStatusResponse;
 }
+
+// ── Telegram approvers ────────────────────────────────────────────────────────
+
+export interface TelegramApproverRow {
+  userId: string;
+  username: string;
+  linkedAt: string;
+  status: "linked";
+}
+
+export async function fetchTelegramApprovers(): Promise<TelegramApproverRow[]> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/telegram-approvers", {
+    headers: { Authorization: auth },
+  });
+  if (!res.ok) throw new Error(await readError(res, "Could not load approvers"));
+  const data = (await res.json()) as { approvers: TelegramApproverRow[] };
+  return data.approvers;
+}
+
+export async function createTelegramLinkToken(
+  username: string
+): Promise<{ token: string; deepLink: string; expectedUsername: string; expiresAt: string }> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/telegram-approvers/link-token", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) throw new Error(await readError(res, "Could not create link token"));
+  return (await res.json()) as {
+    token: string;
+    deepLink: string;
+    expectedUsername: string;
+    expiresAt: string;
+  };
+}
+
+export async function removeTelegramApprover(userId: string): Promise<void> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/telegram-approvers", {
+    method: "DELETE",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (!res.ok) throw new Error(await readError(res, "Could not remove approver"));
+}

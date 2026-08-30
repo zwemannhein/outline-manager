@@ -1,20 +1,17 @@
 /**
  * Telegram Bot Webhook Handler
  *
- * Receives callback_query updates from Telegram and dispatches them by
- * callback type. Order approve/reject is handled here today; login approve/
- * reject will be added by the admin-login-approval work and must reuse this
- * single webhook (Telegram allows only one webhook URL per bot).
+ * Single webhook for:
+ *   1. /start <link-token>   — Telegram approver linking
+ *   2. callback_query        — order approve/reject, login approve/reject
  *
  * SECURITY MODEL
  *  1. X-Telegram-Bot-Api-Secret-Token is verified against TELEGRAM_WEBHOOK_SECRET
- *     when that variable is configured. Telegram sends this header on every
- *     delivery when the webhook was registered with a secret_token.
- *  2. The chat id in the payload is checked against TELEGRAM_CHAT_ID. This is a
- *     necessary but NOT sufficient control on its own, because the payload is
- *     attacker-controlled if the secret token is not configured.
- *  3. No secrets, access URLs, or upstream error strings are logged or sent to
- *     Telegram.
+ *     when that variable is configured.
+ *  2. For callback_query: chatId is checked against linked approvers + TELEGRAM_CHAT_ID.
+ *  3. The Telegram numeric user_id is the permanent security identity; username
+ *     alone cannot authorize any action.
+ *  4. No secrets, access URLs, or upstream error strings are logged or sent back.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -33,26 +30,44 @@ import {
   getAttemptView,
   isValidAttemptId,
 } from "@/lib/login-attempts";
+import {
+  consumeLinkToken,
+  isValidLinkToken,
+  linkApprover,
+  listApprovers,
+} from "@/lib/telegram-approvers";
 import { timingSafeEqual, createHash } from "crypto";
-import type { Order, OutlineServer } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 const logger = createLogger("telegram-webhook");
 
+// ── Telegram update shape ─────────────────────────────────────────────────────
+
+interface TelegramUser {
+  id: number;
+  first_name: string;
+  username?: string;
+}
+
 interface TelegramUpdate {
   update_id: number;
+  message?: {
+    message_id: number;
+    from: TelegramUser;
+    chat: { id: number; type: string };
+    text?: string;
+    entities?: Array<{ type: string; offset: number; length: number }>;
+  };
   callback_query?: {
     id: string;
-    from: { id: number; first_name: string };
+    from: TelegramUser;
     message: { message_id: number; chat: { id: number } };
     data: string;
   };
 }
 
-interface AdminData {
-  servers: OutlineServer[];
-}
+// ── Utility ───────────────────────────────────────────────────────────────────
 
 /** Length-independent timing-safe comparison. */
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -61,13 +76,27 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
+async function answerCallback(botToken: string, id: string, text: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: id, text }),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
   try {
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const allowedChatId = process.env.TELEGRAM_CHAT_ID;
+    const staticChatId = process.env.TELEGRAM_CHAT_ID; // legacy static allowlist
     const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
-    if (!botToken || !allowedChatId) {
+    if (!botToken) {
       logger.error("Telegram bot is not configured; rejecting webhook delivery");
       return NextResponse.json({ ok: false, error: "Not configured" }, { status: 500 });
     }
@@ -77,30 +106,63 @@ export async function POST(req: NextRequest) {
       const provided = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
       if (!provided || !timingSafeEqualStr(provided, webhookSecret)) {
         logger.warn("Telegram webhook rejected: bad or missing secret token");
-        // 403 with no detail; do not reveal whether the header was absent or wrong.
         return NextResponse.json({ ok: false }, { status: 403 });
       }
     } else {
       logger.warn(
-        "TELEGRAM_WEBHOOK_SECRET is not configured — webhook authenticity cannot be verified. " +
-          "Set it and re-register the webhook with secret_token to enable verification."
+        "TELEGRAM_WEBHOOK_SECRET is not configured — webhook authenticity cannot be verified."
       );
     }
 
     const update = (await req.json()) as TelegramUpdate;
-    if (!update.callback_query) return NextResponse.json({ ok: true });
 
+    // ── 2. /start command — Telegram approver linking ────────────────────────
+    if (update.message?.text != null) {
+      const msg = update.message;
+      const text = (msg.text ?? "").trim();
+      // Accept /start <token>
+      const startMatch = /^\/start(?:@\S+)?\s+([0-9a-f]{32})$/i.exec(text);
+      if (startMatch) {
+        return await handleStartLink({
+          botToken,
+          token: startMatch[1].toLowerCase(),
+          from: msg.from,
+          chatId: String(msg.chat.id),
+        });
+      }
+      // Bare /start — acknowledge
+      if (/^\/start(?:@\S+)?$/.test(text)) {
+        await sendTelegramMessage(botToken, {
+          chat_id: msg.chat.id,
+          text: "👋 This bot manages Outline VPN admin approvals.\n\nUse the link generated in the admin dashboard to connect your account.",
+        });
+        return NextResponse.json({ ok: true });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── 3. callback_query ────────────────────────────────────────────────────
+    if (!update.callback_query) return NextResponse.json({ ok: true });
     const { callback_query } = update;
 
-    // ── 2. Check the chat allow-list ────────────────────────────────────────
-    const allowedIds = allowedChatId.split(",").map((id) => id.trim()).filter(Boolean);
+    // Build the combined chatId allowlist: linked approvers + static env config.
+    const approvers = await listApprovers();
+    const linkedChatIds = approvers.map((a) => a.chatId);
+    const staticIds = staticChatId
+      ? staticChatId.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const seen = new Set<string>();
+    const allowedIds: string[] = [];
+    for (const id of [...linkedChatIds, ...staticIds]) {
+      if (!seen.has(id)) { seen.add(id); allowedIds.push(id); }
+    }
+
     const incomingChatId = callback_query.message.chat.id.toString();
     if (!allowedIds.includes(incomingChatId)) {
-      logger.warn("Telegram webhook rejected: chat id not in allow-list");
+      logger.warn({ incomingChatId }, "Telegram webhook rejected: chat id not in allow-list");
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 403 });
     }
 
-    // ── 3. Dispatch by callback type ────────────────────────────────────────
     const parsed = parseCallbackData(callback_query.data);
 
     if (parsed.kind === "login") {
@@ -121,7 +183,6 @@ export async function POST(req: NextRequest) {
 
     return await handleOrderCallback({
       botToken,
-      allowedChatId,
       allowedIds,
       incomingChatId,
       callbackId: callback_query.id,
@@ -134,15 +195,78 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// ── /start link handler ───────────────────────────────────────────────────────
+
+async function handleStartLink(ctx: {
+  botToken: string;
+  token: string;
+  from: TelegramUser;
+  chatId: string;
+}): Promise<NextResponse> {
+  const { botToken, token, from, chatId } = ctx;
+
+  if (!isValidLinkToken(token)) {
+    await sendTelegramMessage(botToken, {
+      chat_id: chatId,
+      text: "❌ This link is invalid.",
+    });
+    return NextResponse.json({ ok: false });
+  }
+
+  // Consume the token atomically.
+  const link = await consumeLinkToken(token);
+
+  if (!link) {
+    await sendTelegramMessage(botToken, {
+      chat_id: chatId,
+      text: "❌ This link has expired or already been used. Please ask the admin to generate a new one.",
+    });
+    logger.warn({ token: maskId(token) }, "Telegram link token invalid/expired/consumed");
+    return NextResponse.json({ ok: false });
+  }
+
+  // Verify expected username if one was specified.
+  const incomingUsername = (from.username ?? "").toLowerCase().trim();
+  if (link.expectedUsername && incomingUsername !== link.expectedUsername) {
+    await sendTelegramMessage(botToken, {
+      chat_id: chatId,
+      text:
+        `❌ This link was generated for @${link.expectedUsername}, ` +
+        `but you are logged in as ${from.username ? "@" + from.username : "a user without a username"}.\n\n` +
+        `Please ask the admin to generate a new link for your account.`,
+    });
+    logger.warn(
+      { expected: link.expectedUsername, got: incomingUsername },
+      "Telegram link username mismatch"
+    );
+    return NextResponse.json({ ok: false });
+  }
+
+  // Link the approver using verified Telegram user_id as the permanent identity.
+  await linkApprover({
+    userId: String(from.id),
+    chatId,
+    username: from.username ?? "",
+  });
+
+  await sendTelegramMessage(botToken, {
+    chat_id: chatId,
+    text:
+      "✅ Telegram approval access linked successfully.\n\n" +
+      "You will now receive admin login approval requests here. " +
+      "Tap Approve or Reject to respond.",
+  });
+
+  logger.info(
+    { userId: String(from.id), username: from.username ?? "" },
+    "Telegram approver linked via /start"
+  );
+
+  return NextResponse.json({ ok: true });
+}
+
 // ── Admin login approve / reject ──────────────────────────────────────────────
 
-/**
- * Handle a login_approve / login_reject callback.
- *
- * Records the decision atomically. Deliberately does NOT issue or transmit a
- * JWT: the original browser must still return with its browserSecret, so
- * approving here is not by itself enough to obtain a session.
- */
 async function handleLoginCallback(ctx: {
   botToken: string;
   callbackId: string;
@@ -170,7 +294,6 @@ async function handleLoginCallback(ctx: {
       : await rejectLoginAttempt(attemptId);
 
   if (!result.ok) {
-    // Repeated taps are idempotent and report the settled state.
     const label =
       result.reason === "expired"
         ? "⚠️ This login request expired"
@@ -183,10 +306,9 @@ async function handleLoginCallback(ctx: {
   }
 
   const approved = action === "approve";
-
   await answerCallback(botToken, callbackId, approved ? "✅ Login approved!" : "❌ Login rejected!");
 
-  // Best-effort: reflect the outcome in the message so the chat shows history.
+  // Reflect outcome in the message.
   await editTelegramMessageText(botToken, {
     chatId,
     messageId,
@@ -199,7 +321,6 @@ async function handleLoginCallback(ctx: {
   });
 
   logger.info({ attempt: maskId(attemptId), approved }, "Admin login decision recorded");
-
   return NextResponse.json({ ok: true });
 }
 
@@ -207,14 +328,13 @@ async function handleLoginCallback(ctx: {
 
 async function handleOrderCallback(ctx: {
   botToken: string;
-  allowedChatId: string;
   allowedIds: string[];
   incomingChatId: string;
   callbackId: string;
   action: "approve" | "reject";
   orderId: string;
 }): Promise<NextResponse> {
-  const { botToken, allowedChatId, allowedIds, incomingChatId, callbackId, action, orderId } = ctx;
+  const { botToken, allowedIds, incomingChatId, callbackId, action, orderId } = ctx;
 
   const order = await findOrder(orderId);
   if (!order) {
@@ -222,27 +342,24 @@ async function handleOrderCallback(ctx: {
     return NextResponse.json({ ok: false });
   }
 
-  // ── REJECT ──────────────────────────────────────────────────────────────────
   if (action === "reject") {
     const result = await rejectOrder(orderId);
     if (!result.ok) {
       await answerCallback(botToken, callbackId, `⚠️ ${result.message}`);
       return NextResponse.json({ ok: false });
     }
-
-    await sendRejectionConfirmation(
-      { botToken, chatId: allowedChatId },
-      { id: order.id, name: order.name }
-    );
+    // Notify all approvers.
+    for (const id of allowedIds) {
+      await sendRejectionConfirmation({ botToken, chatId: id }, { id: order.id, name: order.name }).catch(
+        () => {}
+      );
+    }
     await answerCallback(botToken, callbackId, "❌ Order rejected!");
     logger.info({ orderId }, "Order rejected via Telegram");
     return NextResponse.json({ ok: true });
   }
 
-  // ── APPROVE ─────────────────────────────────────────────────────────────────
-  // Delegates to the SAME engine the dashboard uses, so a Telegram tap racing a
-  // dashboard click cannot produce two Outline keys, and a duplicate tap is a
-  // no-op that reports the existing permanent key.
+  // Approve
   const result = await approveOrder({ orderId, source: "telegram" });
 
   if (!result.ok) {
@@ -259,12 +376,13 @@ async function handleOrderCallback(ctx: {
 
     await answerCallback(botToken, callbackId, friendly);
 
-    // Only escalate genuine failures into the chat, not benign double-taps.
     if (result.code !== "APPROVAL_IN_PROGRESS" && result.code !== "ALREADY_PROCESSED") {
-      await sendTelegramMessage(botToken, {
-        chat_id: allowedChatId,
-        text: `❌ Could not approve order for ${order.name}.\n${result.message}`,
-      });
+      for (const id of allowedIds) {
+        await sendTelegramMessage(botToken, {
+          chat_id: id,
+          text: `❌ Could not approve order for ${order.name}.\n${result.message}`,
+        }).catch(() => {});
+      }
     }
 
     logger.warn({ orderId, code: result.code }, "Telegram approval did not complete");
@@ -272,34 +390,38 @@ async function handleOrderCallback(ctx: {
   }
 
   if (result.reconciled) {
-    // A previous attempt had already created everything.
     await answerCallback(botToken, callbackId, "✅ Already approved");
     return NextResponse.json({ ok: true });
   }
 
-  await sendApprovalConfirmation(
-    { botToken, chatId: allowedChatId },
-    { id: order.id, name: order.name, dynamicUrl: result.dynamicUrl }
-  );
+  // Send confirmation to all approvers.
+  for (const id of allowedIds) {
+    await sendApprovalConfirmation(
+      { botToken, chatId: id },
+      { id: order.id, name: order.name, dynamicUrl: result.dynamicUrl }
+    ).catch(() => {});
+  }
 
-  for (const adminId of allowedIds) {
-    if (adminId !== incomingChatId) {
+  for (const id of allowedIds) {
+    if (id !== incomingChatId) {
       await sendTelegramMessage(botToken, {
-        chat_id: adminId,
+        chat_id: id,
         text: `✅ Order approved by another admin\n\n👤 Customer: ${order.name}`,
-      });
+      }).catch(() => {});
     }
   }
 
   await answerCallback(botToken, callbackId, "✅ Approved!");
 
   if (result.syncPending) {
-    await sendTelegramMessage(botToken, {
-      chat_id: allowedChatId,
-      text:
-        `⚠️ Key created for ${order.name}, but the edge config sync is pending.\n` +
-        `It will retry automatically within the hour.`,
-    });
+    for (const id of allowedIds) {
+      await sendTelegramMessage(botToken, {
+        chat_id: id,
+        text:
+          `⚠️ Key created for ${order.name}, but the edge config sync is pending.\n` +
+          `It will retry automatically within the hour.`,
+      }).catch(() => {});
+    }
   }
 
   logger.info(
@@ -308,28 +430,4 @@ async function handleOrderCallback(ctx: {
   );
 
   return NextResponse.json({ ok: true });
-}
-
-async function answerCallback(botToken: string, id: string, text: string) {
-  try {
-    await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ callback_query_id: id, text }),
-    });
-  } catch {
-    /* ignore — answering the callback is best-effort */
-  }
-}
-
-function getPlanBytes(plan: string, customGB?: number | null): number | null {
-  if (plan === "custom" && customGB) return customGB * 1024 * 1024 * 1024;
-  const map: Record<string, number> = {
-    plan_b: 100 * 1024 * 1024 * 1024,
-    "10gb": 10 * 1024 * 1024 * 1024,
-    "20gb": 20 * 1024 * 1024 * 1024,
-    "50gb": 50 * 1024 * 1024 * 1024,
-    "100gb": 100 * 1024 * 1024 * 1024,
-  };
-  return map[plan] ?? null; // plan_a = null = unlimited
 }

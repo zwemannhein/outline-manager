@@ -14,6 +14,9 @@ const config: Config = {
       screens: { "2xl": "1400px" },
     },
     extend: {
+      screens: {
+        xs: "480px",
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

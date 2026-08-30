@@ -3,16 +3,18 @@
 /**
  * Admin panel for permanent customer identities.
  *
- * The primary action on every row is "Copy Key", which copies the permanent
- * ssconf:// URL. The raw ss:// key is NOT rendered by default — it must be
- * revealed deliberately, which makes an audited server call. That keeps key
- * material out of routine table renders, browser caches and devtools logs.
+ * Performance improvements:
+ * - Search is client-side on already-loaded data (no network per keystroke).
+ * - Mutations update the local row in-place; full reload only on create/delete.
+ * - Immediate pending states prevent double-clicks.
+ * - Loading skeletons on initial fetch.
+ * - No console.log in production.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
-  CalendarPlus, Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus,
+  Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,16 +41,14 @@ interface CustomersPanelProps {
 
 type Busy = { token: string; action: string } | null;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function statusBadge(row: DynamicCustomerRow) {
   switch (row.status) {
-    case "active":
-      return <Badge className="bg-green-600 hover:bg-green-600">Active</Badge>;
-    case "disabled":
-      return <Badge variant="secondary">Disabled</Badge>;
-    case "expired":
-      return <Badge className="bg-amber-600 hover:bg-amber-600">Expired</Badge>;
-    default:
-      return <Badge variant="destructive">Revoked</Badge>;
+    case "active":   return <Badge className="bg-green-600 hover:bg-green-600 text-xs">Active</Badge>;
+    case "disabled": return <Badge variant="secondary" className="text-xs">Disabled</Badge>;
+    case "expired":  return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Expired</Badge>;
+    default:         return <Badge variant="destructive" className="text-xs">Revoked</Badge>;
   }
 }
 
@@ -62,14 +62,12 @@ function usagePercent(row: DynamicCustomerRow): number {
   return Math.min(100, Math.round((row.usedBytes / row.quotaBytes) * 100));
 }
 
-/** Derive subscription duration from cyclesTotal: "1 Month", "3 Months", etc. */
 function durationLabel(row: DynamicCustomerRow): string {
   const n = row.cyclesTotal;
   if (!n || n <= 0) return "—";
   return n === 1 ? "1 Month" : `${n} Months`;
 }
 
-/** Recurring quota allowance: "100 GB / 30 days" or "Unlimited". */
 function quotaAllowanceLabel(row: DynamicCustomerRow): string {
   const configured = row.configuredQuotaBytes ?? row.quotaBytes;
   if (configured === null) return "Unlimited";
@@ -82,14 +80,39 @@ function expiryLabel(row: DynamicCustomerRow): { text: string; tone: string } {
   if (!row.expiryDate) return { text: "No expiry", tone: "text-muted-foreground" };
   const ts = Date.parse(row.expiryDate);
   if (Number.isNaN(ts)) return { text: "Unknown", tone: "text-muted-foreground" };
-
   const days = Math.ceil((ts - Date.now()) / (24 * 60 * 60 * 1000));
   const date = new Date(ts).toLocaleDateString();
-
   if (days < 0) return { text: `Expired ${date}`, tone: "text-destructive font-medium" };
   if (days <= 5) return { text: `${date} (${days}d left)`, tone: "text-amber-600 font-medium" };
   return { text: `${date} (${days}d)`, tone: "text-muted-foreground" };
 }
+
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+function CustomerSkeleton() {
+  return (
+    <div className="rounded-xl border bg-white/70 dark:bg-gray-900/70 p-4 space-y-3 animate-pulse">
+      <div className="flex justify-between gap-3">
+        <div className="space-y-2 flex-1">
+          <div className="h-4 bg-muted rounded w-32" />
+          <div className="h-3 bg-muted rounded w-48" />
+        </div>
+        <div className="h-8 bg-muted rounded w-24" />
+      </div>
+      <div className="h-12 bg-muted/50 rounded-lg" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="space-y-1">
+            <div className="h-3 bg-muted rounded w-12" />
+            <div className="h-4 bg-muted rounded w-20" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export function CustomersPanel({ servers }: CustomersPanelProps) {
   const { toast } = useToast();
@@ -100,7 +123,17 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const [busy, setBusy] = useState<Busy>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [rawSearch, setRawSearch] = useState("");
   const [search, setSearch] = useState("");
+
+  // Debounce: update search state 250 ms after the user stops typing.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function handleSearchChange(v: string) {
+    setRawSearch(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setSearch(v), 250);
+  }
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const [migrateFor, setMigrateFor] = useState<DynamicCustomerRow | null>(null);
   const [editSubFor, setEditSubFor] = useState<DynamicCustomerRow | null>(null);
@@ -123,10 +156,9 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
     }
   }, [toast]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
+  // Client-side filter — no network on every keystroke.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -145,44 +177,64 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   async function copyKey(row: DynamicCustomerRow) {
     const url = row.dynamicUrl;
     if (!url?.startsWith("ssconf://")) {
-      toast({ title: "Permanent key not ready", description: "The key is still syncing. Try again shortly.", variant: "destructive" });
+      toast({
+        title: "Key not ready",
+        description: "Still syncing. Try again in a moment.",
+        variant: "destructive",
+      });
       return;
     }
     try {
       await navigator.clipboard.writeText(url);
       setCopied(row.token);
       setTimeout(() => setCopied(null), 1500);
-      toast({ title: "Permanent key copied", description: row.name });
+      toast({ title: "Key copied", description: row.name });
     } catch {
       toast({ title: "Copy failed", variant: "destructive" });
     }
   }
 
-  /** Wrap a mutation with busy state, error surfacing and a refresh. */
-  async function run(
+  /**
+   * Wrap a mutation with:
+   *  - immediate busy state (prevents double-click)
+   *  - optimistic row patch (no full reload)
+   *  - error surfacing
+   *
+   * `patch` receives the result and returns the fields to merge into the row.
+   * Pass `patch: null` to skip the optimistic update and do a full reload instead.
+   */
+  async function run<T extends Record<string, unknown>>(
     row: DynamicCustomerRow,
     action: string,
-    fn: () => Promise<unknown>,
-    successTitle: string
+    fn: () => Promise<T>,
+    successTitle: string,
+    patch?: (result: T) => Partial<DynamicCustomerRow>
   ) {
+    if (busy?.token === row.token) return; // already busy for this row
     setBusy({ token: row.token, action });
     try {
-      const result = (await fn()) as { syncPending?: boolean } | undefined;
+      const result = await fn();
       toast({
         title: successTitle,
-        description: result?.syncPending
+        description: (result as { syncPending?: boolean }).syncPending
           ? "Edge sync is queued and will retry automatically."
           : row.name,
       });
-      await load();
+      if (patch) {
+        // Optimistically update the row in place — no full network reload.
+        setRows((prev) =>
+          prev.map((r) => (r.token === row.token ? { ...r, ...patch(result) } : r))
+        );
+      } else {
+        await load();
+      }
     } catch (err) {
-      const e = err as Error & { code?: string; details?: unknown };
+      const e = err as Error & { code?: string };
       toast({
         title: e.code === "QUOTA_EXHAUSTED" ? "Quota exhausted" : "Action failed",
         description: e.message,
         variant: "destructive",
       });
-      throw e;
     } finally {
       setBusy(null);
     }
@@ -190,11 +242,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
 
   async function toggleReveal(row: DynamicCustomerRow) {
     if (revealed[row.token]) {
-      setRevealed((prev) => {
-        const next = { ...prev };
-        delete next[row.token];
-        return next;
-      });
+      setRevealed((prev) => { const n = { ...prev }; delete n[row.token]; return n; });
       return;
     }
     try {
@@ -212,80 +260,91 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const isBusy = (row: DynamicCustomerRow, action?: string) =>
     busy?.token === row.token && (action ? busy.action === action : true);
 
+  const busyLabel = (row: DynamicCustomerRow) => {
+    if (busy?.token !== row.token) return null;
+    const map: Record<string, string> = {
+      disable: "Disabling…",
+      enable: "Enabling…",
+      migrate: "Migrating…",
+      editSubscription: "Saving…",
+      cleanup: "Cleaning up…",
+      resync: "Syncing…",
+    };
+    return map[busy.action] ?? "Working…";
+  };
+
   return (
-    <div className="relative flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+    <div className="relative flex-1 overflow-y-auto p-3 sm:p-5 space-y-4">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600">
-            <Users className="w-5 h-5 text-white" />
+      <div className="flex flex-col xs:flex-row gap-3">
+        {/* Title */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shrink-0">
+            <Users className="w-4 h-4 text-white" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Customers</h2>
+            <h2 className="text-base sm:text-lg font-semibold leading-tight">Customers</h2>
             <p className="text-xs text-muted-foreground">
-              {rows.length} permanent {rows.length === 1 ? "identity" : "identities"}
+              {rows.length} {rows.length === 1 ? "identity" : "identities"}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Controls — stack on 320px, row on wider */}
+        <div className="flex flex-wrap items-center gap-2 xs:ml-auto">
           <input
             type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, server, key id"
+            value={rawSearch}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search…"
             aria-label="Search customers"
-            className="h-9 rounded-md border bg-background px-3 text-sm w-48"
+            className="h-9 rounded-md border bg-background px-3 text-base sm:text-sm w-full xs:w-40 sm:w-48 min-w-0"
+            style={{ fontSize: "16px" }} /* prevent iOS zoom */
           />
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="min-h-[36px]">
+            <RefreshCw className={`w-4 h-4 ${loading && rows.length > 0 ? "animate-spin" : ""}`} />
+            <span className="ml-1.5 hidden sm:inline">Refresh</span>
           </Button>
           <Button
             size="sm"
-            className="bg-gradient-to-r from-blue-600 to-purple-600"
+            className="bg-gradient-to-r from-blue-600 to-purple-600 min-h-[36px]"
             onClick={() => setAddingCustomer(true)}
           >
             <UserPlus className="w-4 h-4 mr-1.5" />
-            Add Customer
+            Add
           </Button>
         </div>
       </div>
 
-      {/* Infrastructure health: free-tier headroom and queued syncs */}
+      {/* Health warnings */}
       {health && (health.kvBudgetWarning || health.pendingEdgeSyncs > 0) && (
-        <div
-          role="status"
-          className="rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm space-y-1"
-        >
+        <div role="status" className="rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm space-y-1">
           {health.kvBudgetWarning && (
-            <p className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
-              <AlertTriangle className="w-4 h-4" />
-              Edge config writes today: {health.kvWritesUsedToday} / {health.kvWriteLimit}. Approaching the
-              free-tier daily limit.
+            <p className="flex items-start gap-2 text-amber-900 dark:text-amber-200 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              Edge writes today: {health.kvWritesUsedToday} / {health.kvWriteLimit}. Approaching free-tier limit.
             </p>
           )}
           {health.pendingEdgeSyncs > 0 && (
-            <p className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
-              <CloudOff className="w-4 h-4" />
+            <p className="flex items-start gap-2 text-amber-900 dark:text-amber-200 text-xs">
+              <CloudOff className="w-4 h-4 shrink-0 mt-0.5" />
               {health.pendingEdgeSyncs} customer{health.pendingEdgeSyncs === 1 ? "" : "s"} awaiting edge sync.
-              The hourly job retries automatically.
             </p>
           )}
         </div>
       )}
 
+      {/* Loading skeletons on first load */}
       {loading && rows.length === 0 ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground">
-          <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-          Loading customers…
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => <CustomerSkeleton key={i} />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16 space-y-3 text-muted-foreground">
-          <Users className="w-10 h-10 mx-auto opacity-40" />
+        <div className="text-center py-12 space-y-3 text-muted-foreground">
+          <Users className="w-10 h-10 mx-auto opacity-30" />
           <p className="text-sm">
             {rows.length === 0
-              ? "No permanent customer identities yet. Approve an order, or run the backfill for existing keys."
+              ? "No customers yet. Approve an order or add one manually."
               : "No customers match that search."}
           </p>
         </div>
@@ -294,71 +353,79 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           {filtered.map((row) => {
             const expiry = expiryLabel(row);
             const pct = usagePercent(row);
+            const busy = isBusy(row);
+            const busyMsg = busyLabel(row);
 
             return (
               <div
                 key={row.token}
-                className="rounded-xl border bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm p-4 space-y-3"
+                className="rounded-xl border bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm p-3 sm:p-4 space-y-3"
               >
-                {/* Row 1: identity + status */}
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
+                {/* Row 1: identity + copy key button */}
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium truncate">{row.name || "Unnamed"}</p>
+                      <p className="font-medium text-sm truncate max-w-[200px] sm:max-w-none">
+                        {row.name || "Unnamed"}
+                      </p>
                       {statusBadge(row)}
                       {row.cleanupPending && (
-                        <Badge variant="outline" className="text-amber-600 border-amber-400">
+                        <Badge variant="outline" className="text-amber-600 border-amber-400 text-xs">
                           Cleanup pending
                         </Badge>
                       )}
                       {row.syncState === "pending" && (
-                        <Badge variant="outline" className="text-amber-600 border-amber-400">
+                        <Badge variant="outline" className="text-amber-600 border-amber-400 text-xs">
                           Sync pending
                         </Badge>
                       )}
-                      {row.syncState === "not_configured" && (
-                        <Badge variant="outline">Edge not configured</Badge>
-                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
                       {row.serverName} · key {row.outlineKeyId}
                       {row.planDescription ? ` · ${row.planDescription}` : ""}
                     </p>
+                    {busyMsg && (
+                      <p className="text-xs text-blue-500 font-medium mt-0.5 flex items-center gap-1">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        {busyMsg}
+                      </p>
+                    )}
                   </div>
 
                   <Button
                     size="sm"
                     onClick={() => void copyKey(row)}
                     disabled={!row.dynamicUrl?.startsWith("ssconf://")}
-                    className="bg-gradient-to-r from-blue-600 to-purple-600 disabled:opacity-50"
-                    title={row.dynamicUrl?.startsWith("ssconf://") ? "Copy permanent ssconf:// key" : "Permanent key not ready yet"}
+                    className="bg-gradient-to-r from-blue-600 to-purple-600 disabled:opacity-50 min-h-[36px] shrink-0"
                   >
                     {copied === row.token ? (
-                      <Check className="w-4 h-4 mr-1.5" />
+                      <Check className="w-4 h-4 sm:mr-1.5" />
                     ) : (
-                      <Copy className="w-4 h-4 mr-1.5" />
+                      <Copy className="w-4 h-4 sm:mr-1.5" />
                     )}
-                    {row.dynamicUrl?.startsWith("ssconf://") ? "Copy Key" : "Key not ready"}
+                    <span className="hidden sm:inline">
+                      {row.dynamicUrl?.startsWith("ssconf://") ? "Copy Key" : "Not ready"}
+                    </span>
                   </Button>
                 </div>
 
-                {/* Row 2: permanent URL */}
-                <div className="rounded-lg bg-muted/50 px-3 py-2">
+                {/* Row 2: permanent URL — truncates cleanly on mobile */}
+                <div className="rounded-lg bg-muted/50 px-3 py-2 min-w-0">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                    Permanent key (give this to the customer)
+                    Permanent key
                   </p>
-                  <p className="text-xs font-mono break-all">{row.dynamicUrl}</p>
+                  <p className="text-xs font-mono break-all leading-relaxed">{row.dynamicUrl}</p>
                 </div>
 
-                {/* Row 3: usage + quota + duration + expiry */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                {/* Row 3: stats grid — 2 cols on mobile, 4 on sm+ */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs">
                   <div>
-                    <p className="text-muted-foreground mb-1">Usage</p>
+                    <p className="text-muted-foreground mb-0.5">Usage</p>
                     <p className={row.quotaExhausted ? "text-destructive font-medium" : "font-medium"}>
                       {usageLabel(row)}
                     </p>
                     {row.quotaBytes !== null && (
-                      <div className="h-1.5 rounded-full bg-muted mt-1.5 overflow-hidden">
+                      <div className="h-1.5 rounded-full bg-muted mt-1 overflow-hidden">
                         <div
                           className={`h-full ${pct >= 100 ? "bg-destructive" : pct >= 80 ? "bg-amber-500" : "bg-blue-600"}`}
                           style={{ width: `${pct}%` }}
@@ -366,86 +433,100 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       </div>
                     )}
                   </div>
-
                   <div>
-                    <p className="text-muted-foreground mb-1">Quota</p>
+                    <p className="text-muted-foreground mb-0.5">Quota</p>
                     <p className="font-medium">{quotaAllowanceLabel(row)}</p>
                   </div>
-
                   <div>
-                    <p className="text-muted-foreground mb-1">Duration</p>
+                    <p className="text-muted-foreground mb-0.5">Duration</p>
                     <p className="font-medium">{durationLabel(row)}</p>
                   </div>
-
                   <div>
-                    <p className="text-muted-foreground mb-1">Expiry</p>
+                    <p className="text-muted-foreground mb-0.5">Expiry</p>
                     <p className={expiry.tone}>{expiry.text}</p>
                   </div>
                 </div>
 
-                {/* Row 4: actions */}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                {/* Row 4: actions — wrapping flex, all 44px touch targets */}
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-0.5">
                   {row.status === "active" ? (
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={isBusy(row)}
+                      disabled={busy}
+                      className="min-h-[36px]"
                       onClick={() =>
-                        void run(row, "disable", () => disableCustomer(row.token), "Customer disabled").catch(
-                          () => {}
+                        void run(
+                          row, "disable",
+                          () => disableCustomer(row.token),
+                          "Customer disabled",
+                          (r) => ({ status: "disabled" as const, syncPending: r.syncPending })
                         )
                       }
                     >
-                      <Ban className="w-3.5 h-3.5 mr-1.5" />
-                      Disable
+                      <Ban className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <span className="hidden sm:inline">Disable</span>
                     </Button>
                   ) : row.status !== "revoked" ? (
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={isBusy(row)}
+                      disabled={busy}
+                      className="min-h-[36px]"
                       onClick={() =>
-                        void run(row, "enable", () => enableCustomer(row.token), "Customer enabled").catch(
-                          () => {}
+                        void run(
+                          row, "enable",
+                          () => enableCustomer(row.token),
+                          "Customer enabled",
+                          () => ({ status: "active" as const })
                         )
                       }
                     >
-                      <Play className="w-3.5 h-3.5 mr-1.5" />
-                      Enable
+                      <Play className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <span className="hidden sm:inline">Enable</span>
                     </Button>
                   ) : null}
 
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={isBusy(row) || row.status !== "active"}
+                    disabled={busy || row.status !== "active"}
+                    className="min-h-[36px]"
                     onClick={() => setMigrateFor(row)}
                   >
-                    <ArrowRightLeft className="w-3.5 h-3.5 mr-1.5" />
-                    Migrate
+                    <ArrowRightLeft className="w-3.5 h-3.5 sm:mr-1.5" />
+                    <span className="hidden sm:inline">Migrate</span>
                   </Button>
 
-                  <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setEditSubFor(row)}>
-                    <Gauge className="w-3.5 h-3.5 mr-1.5" />
-                    Edit Subscription
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    className="min-h-[36px]"
+                    onClick={() => setEditSubFor(row)}
+                  >
+                    <Gauge className="w-3.5 h-3.5 sm:mr-1.5" />
+                    <span className="hidden sm:inline">Edit Sub</span>
+                    <span className="inline sm:hidden text-xs">Edit</span>
                   </Button>
 
                   {row.cleanupPending && (
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={isBusy(row)}
+                      disabled={busy}
+                      className="min-h-[36px]"
                       onClick={() =>
                         void run(
-                          row,
-                          "cleanup",
+                          row, "cleanup",
                           () => cleanupCustomerMigration(row.token),
-                          "Old key removed"
-                        ).catch(() => {})
+                          "Old key removed",
+                          () => ({ cleanupPending: false })
+                        )
                       }
                     >
-                      <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                      Clean up old key
+                      <Trash2 className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <span className="hidden sm:inline">Clean up</span>
                     </Button>
                   )}
 
@@ -453,38 +534,43 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={isBusy(row)}
+                      disabled={busy}
+                      className="min-h-[36px]"
                       onClick={() =>
-                        void run(row, "resync", () => resyncCustomer(row.token), "Edge resynced").catch(
-                          () => {}
+                        void run(
+                          row, "resync",
+                          () => resyncCustomer(row.token),
+                          "Edge resynced",
+                          () => ({ syncState: "synced" as const })
                         )
                       }
                     >
-                      <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                      Resync
+                      <RefreshCw className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <span className="hidden sm:inline">Resync</span>
                     </Button>
                   )}
 
-                  {/* Troubleshooting only. Audited server-side. */}
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-muted-foreground ml-auto"
+                    className="text-muted-foreground ml-auto min-h-[36px]"
                     onClick={() => void toggleReveal(row)}
                   >
                     {revealed[row.token] ? (
-                      <EyeOff className="w-3.5 h-3.5 mr-1.5" />
+                      <EyeOff className="w-3.5 h-3.5 sm:mr-1.5" />
                     ) : (
-                      <Eye className="w-3.5 h-3.5 mr-1.5" />
+                      <Eye className="w-3.5 h-3.5 sm:mr-1.5" />
                     )}
-                    {revealed[row.token] ? "Hide raw key" : "Reveal raw key"}
+                    <span className="hidden sm:inline">
+                      {revealed[row.token] ? "Hide" : "Reveal raw"}
+                    </span>
                   </Button>
                 </div>
 
                 {revealed[row.token] && (
                   <div className="rounded-lg border border-dashed border-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2">
                     <p className="text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-300 mb-1">
-                      Raw key — admin troubleshooting only, do not send to customers
+                      Raw key — admin only, do not send to customers
                     </p>
                     <p className="text-xs font-mono break-all">{revealed[row.token]}</p>
                   </div>
@@ -504,11 +590,11 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           const row = migrateFor!;
           setMigrateFor(null);
           await run(
-            row,
-            "migrate",
+            row, "migrate",
             () => migrateCustomer(row.token, destServerId, allowExhausted),
-            "Customer migrated — permanent key unchanged"
-          ).catch(() => {});
+            "Customer migrated — permanent key unchanged",
+            () => ({ cleanupPending: true })
+          );
         }}
       />
 
@@ -519,11 +605,15 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           const row = editSubFor!;
           setEditSubFor(null);
           await run(
-            row,
-            "editSubscription",
+            row, "editSubscription",
             () => editCustomerSubscription(row.token, quotaGB, expiryDate),
-            "Subscription updated"
-          ).catch(() => {});
+            "Subscription updated",
+            (r) => ({
+              quotaBytes: r.quotaBytes,
+              expiryDate: r.expiryDate,
+              status: r.disabledImmediately ? ("disabled" as const) : row.status,
+            })
+          );
         }}
       />
 
@@ -536,6 +626,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
             try {
               await createAdminCustomer(params);
               toast({ title: "Customer created", description: params.name });
+              // Full reload needed: new row to insert.
               await load();
             } catch (err) {
               toast({
@@ -546,6 +637,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
             }
           }}
         />
-      )}    </div>
+      )}
+    </div>
   );
 }

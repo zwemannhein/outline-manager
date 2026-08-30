@@ -58,17 +58,12 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    console.log(`[ServerDashboard] Loading server: ${server.name} (${server.id})`);
     try {
-      const startTime = Date.now();
       const [serverInfo, accessKeys, transferMetrics] = await Promise.all([
         getServerInfo(server.apiUrl, server.certSha256),
         listAccessKeys(server.apiUrl, server.certSha256),
         getTransferMetrics(server.apiUrl, server.certSha256),
       ]);
-      const loadTime = Date.now() - startTime;
-      console.log(`[ServerDashboard] Loaded successfully in ${loadTime}ms - ${accessKeys.length} keys`);
-      
       setInfo(serverInfo);
       setKeys(accessKeys);
       setMetrics(transferMetrics.bytesTransferredByUserId);
@@ -76,7 +71,6 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
       onOnlineChange(server.id, true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ServerDashboard] Load error for ${server.name}:`, err);
       setError(msg);
       onOnlineChange(server.id, false);
     } finally {
@@ -92,73 +86,59 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
 
   async function handleCreateKey(name: string) {
     setDialog({ type: "none" });
-    console.log(`[ServerDashboard] Creating key: ${name}`);
     try {
       const key = await createAccessKey(server.apiUrl, server.certSha256, name);
-      console.log(`[ServerDashboard] Key created successfully: ${key.id}`);
       setKeys((prev) => [...prev, key]);
       setKeyMetas((prev) => ({ ...prev, [key.id]: { expiryDate: null } }));
       toast({ title: "Key created", description: key.name || `Key #${key.id}` });
     } catch (err) {
-      console.error(`[ServerDashboard] Create key error:`, err);
       toast({ variant: "destructive", title: "Failed to create key", description: String(err) });
     }
   }
 
   async function handleDeleteKey(keyId: string) {
     setDialog({ type: "none" });
-    console.log(`[ServerDashboard] Deleting key: ${keyId}`);
     try {
       await deleteAccessKey(server.apiUrl, server.certSha256, keyId);
       deleteKeyMeta(server.id, keyId);
-      console.log(`[ServerDashboard] Key deleted successfully: ${keyId}`);
       setKeys((prev) => prev.filter((k) => k.id !== keyId));
       setKeyMetas((prev) => { const n = { ...prev }; delete n[keyId]; return n; });
       toast({ title: "Key deleted" });
     } catch (err) {
-      console.error(`[ServerDashboard] Delete key error:`, err);
       toast({ variant: "destructive", title: "Failed to delete key", description: String(err) });
     }
   }
 
   async function handleRenameKey(keyId: string, name: string) {
     setDialog({ type: "none" });
-    console.log(`[ServerDashboard] Renaming key ${keyId} to: ${name}`);
     try {
       await renameAccessKey(server.apiUrl, server.certSha256, keyId, name);
-      console.log(`[ServerDashboard] Key renamed successfully: ${keyId}`);
       setKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, name } : k));
       toast({ title: "Key renamed" });
     } catch (err) {
-      console.error(`[ServerDashboard] Rename key error:`, err);
       toast({ variant: "destructive", title: "Failed to rename key", description: String(err) });
     }
   }
 
   async function handleSetLimit(keyId: string, bytes: number | null) {
     setDialog({ type: "none" });
-    console.log(`[ServerDashboard] Setting limit for key ${keyId}:`, bytes);
     try {
       if (bytes === null) {
         await removeDataLimit(server.apiUrl, server.certSha256, keyId);
         setKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, dataLimit: undefined } : k));
-        console.log(`[ServerDashboard] Data limit removed for key: ${keyId}`);
         toast({ title: "Data limit removed" });
       } else {
         await setDataLimit(server.apiUrl, server.certSha256, keyId, bytes);
         setKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, dataLimit: { bytes } } : k));
-        console.log(`[ServerDashboard] Data limit set for key ${keyId}: ${bytes} bytes`);
         toast({ title: "Data limit set", description: formatBytes(bytes) });
       }
     } catch (err) {
-      console.error(`[ServerDashboard] Set limit error:`, err);
       toast({ variant: "destructive", title: "Failed to set limit", description: String(err) });
     }
   }
 
   function handleSetExpiry(keyId: string, isoDate: string | null) {
     setDialog({ type: "none" });
-    console.log(`[ServerDashboard] Setting expiry for key ${keyId}:`, isoDate);
     const meta: KeyMeta = { expiryDate: isoDate };
     setKeyMeta(server.id, keyId, meta);
     setKeyMetas((prev) => ({ ...prev, [keyId]: meta }));

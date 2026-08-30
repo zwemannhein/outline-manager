@@ -265,3 +265,16 @@ export const editSubscriptionSchema = z.object({
   /** ISO datetime string, or null to remove expiry. */
   expiryDate: z.string().datetime().nullable().optional(),
 });
+
+// ── Telegram approver management ──────────────────────────────────────────────
+
+/** Create a one-time link token for a new Telegram approver. */
+export const createLinkTokenSchema = z.object({
+  /** Telegram username without @. Empty string = any username accepted. */
+  username: z.string().max(64).default(""),
+});
+
+/** Remove a linked Telegram approver. */
+export const removeApproverSchema = z.object({
+  userId: z.string().min(1, "userId is required"),
+});

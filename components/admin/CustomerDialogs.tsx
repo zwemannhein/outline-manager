@@ -28,13 +28,13 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 shadow-2xl border p-6 space-y-5"
+        className="relative w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl bg-white dark:bg-gray-900 shadow-2xl border p-5 sm:p-6 space-y-4 sm:space-y-5 max-h-[90dvh] overflow-y-auto"
       >
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">

@@ -6,7 +6,12 @@
  * exchanges { attemptId, browserSecret } at /api/v1/auth/login/status for a
  * session. Telegram approval alone is not sufficient.
  *
- * Wrong credentials never create an attempt and never send a Telegram message.
+ * Telegram notification targets (in priority order):
+ *   1. All linked approvers from Redis (tg:approvers)
+ *   2. Fallback: TELEGRAM_CHAT_ID env var (legacy / first-run)
+ *
+ * If ZERO Telegram targets are configured, the login is rejected with a clear
+ * error rather than silently granting password-only access.
  */
 
 export const runtime = "nodejs";
@@ -30,13 +35,14 @@ import {
   MAX_PENDING_ATTEMPTS,
 } from "@/lib/login-attempts";
 import { sendLoginApprovalRequest } from "@/lib/telegram";
+import { getApproverChatIds } from "@/lib/telegram-approvers";
 import { createLogger, maskId } from "@/lib/logger";
 
 const logger = createLogger("auth");
 
 export async function POST(req: NextRequest) {
   try {
-    // Rate limiting: 5 attempts per 15 minutes per IP
+    // Rate limiting: 5 attempts per 15 minutes per IP.
     const ip = getClientIp(req);
     const rateLimit = await checkRateLimit(ip, "login", {
       requests: 5,
@@ -51,8 +57,7 @@ export async function POST(req: NextRequest) {
     const body = await parseJsonBody(req);
     const { username, password } = loginSchema.parse(body);
 
-    // Both halves are always evaluated inside verifyAdminCredentials so the
-    // response does not reveal which one was wrong. Never log either value.
+    // Both halves evaluated inside verifyAdminCredentials — timing-safe.
     const valid = await verifyAdminCredentials(username, password);
 
     if (!valid) {
@@ -60,7 +65,7 @@ export async function POST(req: NextRequest) {
       throw new AppError("Invalid credentials", 401, "INVALID_CREDENTIALS");
     }
 
-    // Bound concurrent pending approvals so a repeated login cannot flood Telegram.
+    // Bound concurrent pending approvals to avoid Telegram spam.
     const pending = await countPendingAttempts();
     if (pending >= MAX_PENDING_ATTEMPTS) {
       logger.warn({ ip, pending }, "Too many pending login approvals");
@@ -80,16 +85,30 @@ export async function POST(req: NextRequest) {
       userAgent: rawUserAgent ?? "",
     });
 
-    // Notify every configured admin chat.
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const chatIds = process.env.TELEGRAM_CHAT_ID;
 
-    if (!botToken || !chatIds) {
-      // Fail closed: without Telegram there is no second factor, so refuse
-      // rather than silently downgrading to password-only login.
-      logger.error("Telegram is not configured; cannot complete admin login approval");
+    if (!botToken) {
+      logger.error("Telegram bot token not configured; cannot complete admin login approval");
       throw new AppError(
         "Login approval is unavailable because Telegram is not configured.",
+        503,
+        "APPROVAL_UNAVAILABLE"
+      );
+    }
+
+    // Build notification target list.
+    // Priority: linked approvers from Redis → fallback TELEGRAM_CHAT_ID env var.
+    const linkedChatIds = await getApproverChatIds().catch(() => [] as string[]);
+    const staticIds = (process.env.TELEGRAM_CHAT_ID ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const chatIds = linkedChatIds.length > 0 ? linkedChatIds : staticIds;
+
+    if (chatIds.length === 0) {
+      logger.error("No Telegram approvers configured; cannot complete admin login approval");
+      throw new AppError(
+        "No Telegram approvers are configured. Add one in Settings → Telegram Approvers.",
         503,
         "APPROVAL_UNAVAILABLE"
       );
@@ -98,7 +117,7 @@ export async function POST(req: NextRequest) {
     const browserSummary = describeUserAgent(rawUserAgent);
     let anyDelivered = false;
 
-    for (const chatId of chatIds.split(",").map((c) => c.trim()).filter(Boolean)) {
+    for (const chatId of chatIds) {
       const result = await sendLoginApprovalRequest(
         { botToken, chatId },
         {
@@ -110,7 +129,7 @@ export async function POST(req: NextRequest) {
         }
       );
       if (result.ok) anyDelivered = true;
-      else logger.warn({ chatId, error: result.error }, "Failed to send login approval request");
+      else logger.warn({ chatId, error: result.error }, "Failed to deliver login approval request");
     }
 
     if (!anyDelivered) {
@@ -122,11 +141,10 @@ export async function POST(req: NextRequest) {
     }
 
     logger.info(
-      { ip, attempt: maskId(attempt.attemptId) },
+      { ip, attempt: maskId(attempt.attemptId), targets: chatIds.length },
       "Credentials accepted, awaiting Telegram approval"
     );
 
-    // browserSecret is returned exactly once, only to this browser.
     return successResponse({
       status: "approval_required",
       attemptId: attempt.attemptId,
