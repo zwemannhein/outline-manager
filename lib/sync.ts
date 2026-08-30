@@ -388,6 +388,8 @@ export interface DynamicCustomerRow {
   dynamicUrl: string;
   /** Only present when explicitly requested via revealRaw. */
   accessUrl?: string;
+  /** Admin-configured allowance per 30-day cycle. Never decremented by usage. */
+  configuredQuotaBytes: number | null;
   quotaBytes: number | null;
   usedBytes: number;
   carriedBytes: number;
@@ -513,6 +515,56 @@ export function revealRawKey(token: string) {
 
 export function resyncCustomer(token: string) {
   return dynamicAction<{ ok: boolean }>({ action: "resync", token });
+}
+
+export function editCustomerSubscription(
+  token: string,
+  quotaGB: number | null,
+  expiryDate: string | null
+) {
+  return dynamicAction<{
+    ok: boolean;
+    quotaBytes: number | null;
+    expiryDate: string | null;
+    disabledImmediately: boolean;
+    syncPending: boolean;
+    urlChanged: boolean;
+  }>({ action: "editSubscription", token, quotaGB, expiryDate });
+}
+
+export async function createAdminCustomer(params: {
+  name: string;
+  serverId: string;
+  keyMode: "new" | "existing";
+  existingKeyId?: string | null;
+  quotaGB: number | null;
+  expiryDate: string | null;
+}): Promise<{ ok: boolean; token: string; dynamicUrl: string; outlineKeyId: string; syncPending: boolean }> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/admin/customers", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const err = new Error((data as { error?: string } | null)?.error || "Create failed") as Error & { code?: string };
+    err.code = (data as { code?: string } | null)?.code;
+    throw err;
+  }
+  return (await res.json()) as { ok: boolean; token: string; dynamicUrl: string; outlineKeyId: string; syncPending: boolean };
+}
+
+export async function listUnmanagedKeys(serverId: string): Promise<Array<{ id: string; name: string }>> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch(`/api/v1/admin/customers?serverId=${encodeURIComponent(serverId)}`, {
+    headers: { Authorization: auth },
+  });
+  if (!res.ok) throw new Error(await readError(res, "Could not load keys"));
+  const data = await res.json() as { keys: Array<{ id: string; name: string }> };
+  return data.keys;
 }
 
 // ── Customer order flow ───────────────────────────────────────────────────────

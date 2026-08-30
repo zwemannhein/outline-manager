@@ -485,3 +485,112 @@ export async function updateQuota(
   // No projection write: accessUrl and status are unchanged.
   return { ok: true, syncPending: false, quotaBytes, appliedBytes };
 }
+
+// ── Edit subscription (quota + expiry together) ───────────────────────────────
+
+/**
+ * Change quota and/or expiry date in one atomic admin operation.
+ *
+ * Rules:
+ * - If the new expiry is in the past, the customer is disabled immediately.
+ * - Changing expiry to the future on an *expiry-disabled* customer re-enables them.
+ *   Manually-disabled customers (reason !== "expiry") are NOT re-enabled.
+ * - Quota change follows the same mid-cycle credit logic as updateQuota.
+ * - The permanent ssconf:// URL never changes (rev untouched).
+ */
+export async function editSubscription(
+  token: string,
+  options: { quotaGB: number | null; expiryDate: string | null }
+): Promise<
+  LifecycleResult<{
+    quotaBytes: number | null;
+    expiryDate: string | null;
+    disabledImmediately: boolean;
+  }>
+> {
+  const record = await readDynamicRecord(token);
+  if (!record) return { ok: false, code: "NOT_FOUND", message: "Customer identity not found." };
+  if (record.status === "revoked") return { ok: false, code: "REVOKED", message: "Identity is revoked." };
+
+  const quotaBytes = options.quotaGB === null ? null : Math.floor(options.quotaGB * GIB);
+  const newExpiry = options.expiryDate ? new Date(options.expiryDate) : null;
+  const now = Date.now();
+
+  const meta = (await readKeyMeta(record.serverId, record.outlineKeyId)) ?? null;
+
+  // ── Quota change (same logic as updateQuota) ──────────────────────────────
+  let appliedBytes: number | null = quotaBytes;
+  if (quotaBytes !== null && meta) {
+    const currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId).catch(() => 0);
+    const usage = computeQuotaUsage({ ...meta, quotaBytes }, currentBytes);
+    appliedBytes = usage.remainingBytes ?? 0;
+  }
+
+  if (record.status === "active") {
+    try {
+      await applyDataLimit(record.serverId, record.outlineKeyId, appliedBytes);
+    } catch {
+      return { ok: false, code: "OUTLINE_FAILED", message: "Could not update limit on Outline server." };
+    }
+  }
+
+  // ── Expiry / cycle adjustment ──────────────────────────────────────────────
+  const CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
+  let patchExpiry: string | null = options.expiryDate ?? null;
+  let patchCyclesTotal: number | undefined;
+
+  if (newExpiry) {
+    const anchor = meta?.periodStart ? Date.parse(meta.periodStart) : now;
+    const spanMs = newExpiry.getTime() - (Number.isNaN(anchor) ? now : anchor);
+    patchCyclesTotal = Math.max(1, Math.ceil(spanMs / CYCLE_MS));
+    patchExpiry = newExpiry.toISOString();
+  }
+
+  await patchKeyMeta(record.serverId, record.outlineKeyId, {
+    quotaBytes,
+    expiryDate: patchExpiry,
+    ...(patchCyclesTotal !== undefined ? { cyclesTotal: patchCyclesTotal } : {}),
+  });
+
+  // Reschedule cron entries with fresh meta.
+  const updatedMeta = await readKeyMeta(record.serverId, record.outlineKeyId);
+  if (updatedMeta) {
+    const { scheduleCycleDue, scheduleExpiryDue, clearExpiryDue } = await import("./dynamic-keys");
+    if (newExpiry) {
+      await scheduleExpiryDue(token, newExpiry.getTime());
+    } else {
+      await clearExpiryDue(token);
+    }
+    const cycleDue = cycleDueAt(updatedMeta);
+    if (cycleDue) await scheduleCycleDue(token, cycleDue);
+  }
+
+  // ── Past-expiry: disable immediately ──────────────────────────────────────
+  let disabledImmediately = false;
+  let syncPending = false;
+
+  if (newExpiry && newExpiry.getTime() <= now) {
+    const disabled = await disableIdentity({ token, reason: "expiry" });
+    disabledImmediately = true;
+    syncPending = disabled.ok ? disabled.syncPending : false;
+  } else if (newExpiry && newExpiry.getTime() > now) {
+    // Re-enable an expiry-disabled customer when a future date is set.
+    if (
+      record.status === "expired" ||
+      (record.status === "disabled" && record.suspendedState?.reason === "expiry")
+    ) {
+      const enabled = await enableIdentity({ token });
+      syncPending = enabled.ok ? enabled.syncPending : false;
+    }
+  }
+
+  logger.info({ dyn: maskId(token) }, "Subscription edited (quota + expiry)");
+
+  return {
+    ok: true,
+    syncPending,
+    quotaBytes,
+    expiryDate: patchExpiry,
+    disabledImmediately,
+  };
+}

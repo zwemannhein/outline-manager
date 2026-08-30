@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
-  CalendarPlus, Gauge, AlertTriangle, CloudOff, Trash2, Users,
+  CalendarPlus, Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,16 +22,16 @@ import {
   fetchDynamicCustomers,
   disableCustomer,
   enableCustomer,
-  renewCustomer,
-  updateCustomerQuota,
   migrateCustomer,
   cleanupCustomerMigration,
   revealRawKey,
   resyncCustomer,
+  editCustomerSubscription,
+  createAdminCustomer,
   type DynamicCustomerRow,
   type DynamicHealth,
 } from "@/lib/sync";
-import { MigrateServerDialog, RenewDialog, QuotaDialog } from "./CustomerDialogs";
+import { MigrateServerDialog, EditSubscriptionDialog, AddCustomerDialog } from "./CustomerDialogs";
 
 interface CustomersPanelProps {
   servers: Array<{ id: string; name: string }>;
@@ -71,9 +71,10 @@ function durationLabel(row: DynamicCustomerRow): string {
 
 /** Recurring quota allowance: "100 GB / 30 days" or "Unlimited". */
 function quotaAllowanceLabel(row: DynamicCustomerRow): string {
-  if (row.quotaBytes === null) return "Unlimited";
-  const gb = row.quotaBytes / (1024 * 1024 * 1024);
-  const display = gb >= 1 ? `${Math.round(gb)} GB` : formatBytes(row.quotaBytes);
+  const configured = row.configuredQuotaBytes ?? row.quotaBytes;
+  if (configured === null) return "Unlimited";
+  const gb = configured / (1024 * 1024 * 1024);
+  const display = gb >= 1 ? `${Math.round(gb)} GB` : formatBytes(configured);
   return `${display} / 30 days`;
 }
 
@@ -102,8 +103,8 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const [search, setSearch] = useState("");
 
   const [migrateFor, setMigrateFor] = useState<DynamicCustomerRow | null>(null);
-  const [renewFor, setRenewFor] = useState<DynamicCustomerRow | null>(null);
-  const [quotaFor, setQuotaFor] = useState<DynamicCustomerRow | null>(null);
+  const [editSubFor, setEditSubFor] = useState<DynamicCustomerRow | null>(null);
+  const [addingCustomer, setAddingCustomer] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -239,6 +240,14 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
+          </Button>
+          <Button
+            size="sm"
+            className="bg-gradient-to-r from-blue-600 to-purple-600"
+            onClick={() => setAddingCustomer(true)}
+          >
+            <UserPlus className="w-4 h-4 mr-1.5" />
+            Add Customer
           </Button>
         </div>
       </div>
@@ -416,14 +425,9 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     Migrate
                   </Button>
 
-                  <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setQuotaFor(row)}>
+                  <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setEditSubFor(row)}>
                     <Gauge className="w-3.5 h-3.5 mr-1.5" />
-                    Change Quota
-                  </Button>
-
-                  <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setRenewFor(row)}>
-                    <CalendarPlus className="w-3.5 h-3.5 mr-1.5" />
-                    Renew
+                    Edit Subscription
                   </Button>
 
                   {row.cleanupPending && (
@@ -508,32 +512,40 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
         }}
       />
 
-      <RenewDialog
-        customer={renewFor}
-        onClose={() => setRenewFor(null)}
-        onConfirm={async (cycles) => {
-          const row = renewFor!;
-          setRenewFor(null);
-          await run(row, "renew", () => renewCustomer(row.token, cycles), "Subscription renewed").catch(
-            () => {}
-          );
-        }}
-      />
-
-      <QuotaDialog
-        customer={quotaFor}
-        onClose={() => setQuotaFor(null)}
-        onConfirm={async (quotaGB) => {
-          const row = quotaFor!;
-          setQuotaFor(null);
+      <EditSubscriptionDialog
+        customer={editSubFor}
+        onClose={() => setEditSubFor(null)}
+        onConfirm={async (quotaGB, expiryDate) => {
+          const row = editSubFor!;
+          setEditSubFor(null);
           await run(
             row,
-            "quota",
-            () => updateCustomerQuota(row.token, quotaGB),
-            "Quota updated — permanent key unchanged"
+            "editSubscription",
+            () => editCustomerSubscription(row.token, quotaGB, expiryDate),
+            "Subscription updated"
           ).catch(() => {});
         }}
       />
-    </div>
+
+      {addingCustomer && (
+        <AddCustomerDialog
+          servers={servers}
+          onClose={() => setAddingCustomer(false)}
+          onConfirm={async (params) => {
+            setAddingCustomer(false);
+            try {
+              await createAdminCustomer(params);
+              toast({ title: "Customer created", description: params.name });
+              await load();
+            } catch (err) {
+              toast({
+                title: "Could not create customer",
+                description: err instanceof Error ? err.message : "Unknown error",
+                variant: "destructive",
+              });
+            }
+          }}
+        />
+      )}    </div>
   );
 }

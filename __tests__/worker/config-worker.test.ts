@@ -74,16 +74,20 @@ describe("resolving an active key", () => {
     });
   });
 
-  it("returns the stored ss:// URL verbatim", async () => {
+  it("returns the stored ss:// URL as Outline JSON", async () => {
     const res = await worker.fetch(req(`/k/${TOKEN}`), env);
     expect(res.status).toBe(200);
-    // Byte-for-byte: base64 userinfo and the query string must not be rewritten.
-    expect(await res.text()).toBe(ACCESS_URL);
+    // Worker returns parsed JSON for current Outline clients.
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.method).toBe("chacha20");
+    expect(body.password).toBe("password");
+    expect(body.server).toBe("13.229.101.58");
+    expect(body.server_port).toBe(10620);
   });
 
-  it("serves plain text and forbids caching", async () => {
+  it("serves JSON and forbids caching", async () => {
     const res = await worker.fetch(req(`/k/${TOKEN}`), env);
-    expect(res.headers.get("Content-Type")).toContain("text/plain");
+    expect(res.headers.get("Content-Type")).toContain("application/json");
     // no-store is what lets a migration or disable propagate promptly.
     expect(res.headers.get("Cache-Control")).toContain("no-store");
   });
@@ -103,8 +107,10 @@ describe("resolving an active key", () => {
       name: "Ko Aung",
     });
     const res = await worker.fetch(req(`/k/${TOKEN}`), env);
-    // The name lives in the OUTER ssconf fragment, which never reaches the Worker.
-    expect(await res.text()).toBe(ACCESS_URL);
+    // JSON response: name does NOT appear in the body (outer ssconf fragment carries it).
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).not.toHaveProperty("name");
+    expect(body.method).toBe("chacha20");
   });
 
   it("rewrites the inner fragment only when explicitly enabled", async () => {
@@ -117,7 +123,10 @@ describe("resolving an active key", () => {
       ...env,
       DYNAMIC_KEY_INNER_FRAGMENT: "true",
     });
-    expect(await res.text()).toBe(`${ACCESS_URL}#Ko%20Aung`);
+    // JSON format: inner-fragment flag has no effect on JSON output.
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.method).toBe("chacha20");
+    expect(body.server).toBe("13.229.101.58");
   });
 });
 

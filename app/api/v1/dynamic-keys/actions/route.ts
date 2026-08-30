@@ -37,6 +37,7 @@ import {
   migrateCleanupSchema,
   renewDynamicSchema,
   updateQuotaSchema,
+  editSubscriptionSchema,
 } from "@/lib/validation";
 import { z } from "zod";
 import {
@@ -44,6 +45,7 @@ import {
   enableIdentity,
   renewIdentity,
   updateQuota,
+  editSubscription,
 } from "@/lib/dynamic-lifecycle";
 import { migrateToServer, cleanupMigration } from "@/lib/server-migration";
 import { readDynamicRecord, buildDynamicUrl } from "@/lib/dynamic-keys";
@@ -62,6 +64,7 @@ const actionSchema = z.object({
     "enable",
     "renew",
     "updateQuota",
+    "editSubscription",
     "migrate",
     "migrateCleanup",
     "revealRaw",
@@ -178,6 +181,26 @@ export async function POST(req: NextRequest) {
           quotaBytes: result.quotaBytes,
           appliedBytes: result.appliedBytes,
           // Unchanged by construction: no token or projection change.
+          urlChanged: false,
+        });
+      }
+
+      // ── Edit subscription (quota + expiry together) ────────────────────────
+      case "editSubscription": {
+        const input = editSubscriptionSchema.parse(body);
+        const result = await editSubscription(input.token, {
+          quotaGB: input.quotaGB,
+          expiryDate: input.expiryDate ?? null,
+        });
+        if (!result.ok) fail(result.code, result.message);
+
+        logger.info({ user: auth.username, dyn: maskId(input.token) }, "Subscription edited");
+        return successResponse({
+          ok: true,
+          quotaBytes: result.quotaBytes,
+          expiryDate: result.expiryDate,
+          disabledImmediately: result.disabledImmediately,
+          syncPending: result.syncPending,
           urlChanged: false,
         });
       }

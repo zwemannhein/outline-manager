@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { X, ArrowRightLeft, CalendarPlus, Gauge, AlertTriangle } from "lucide-react";
+import { X, ArrowRightLeft, CalendarPlus, Gauge, AlertTriangle, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -330,6 +330,283 @@ export function QuotaDialog({
             onClick={() => void onConfirm(unlimited ? null : gb)}
           >
             Save quota
+          </Button>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+// ── Edit Subscription (quota + expiry together) ───────────────────────────────
+
+export function EditSubscriptionDialog({
+  customer,
+  onClose,
+  onConfirm,
+}: {
+  customer: DynamicCustomerRow | null;
+  onClose: () => void;
+  onConfirm: (quotaGB: number | null, expiryDate: string | null) => void | Promise<void>;
+}) {
+  const [unlimited, setUnlimited] = useState(false);
+  const [gb, setGb] = useState(100);
+  const [expiry, setExpiry] = useState("");
+
+  useEffect(() => {
+    if (!customer) return;
+    const isUnlimited = customer.quotaBytes === null;
+    setUnlimited(isUnlimited);
+    setGb(
+      isUnlimited
+        ? 100
+        : Math.max(1, Math.round(((customer.configuredQuotaBytes ?? customer.quotaBytes ?? 0)) / (1024 * 1024 * 1024)))
+    );
+    setExpiry(customer.expiryDate ? customer.expiryDate.slice(0, 10) : "");
+  }, [customer]);
+
+  if (!customer) return null;
+
+  function handleSave() {
+    const quotaGB = unlimited ? null : gb;
+    const expiryIso = expiry ? new Date(expiry + "T23:59:59Z").toISOString() : null;
+    void onConfirm(quotaGB, expiryIso);
+  }
+
+  return (
+    <Shell title="Edit subscription" icon={<Gauge className="w-5 h-5 text-white" />} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="text-sm space-y-1">
+          <p><span className="text-muted-foreground">Customer:</span> {customer.name}</p>
+          <p>
+            <span className="text-muted-foreground">Used this period:</span>{" "}
+            {formatBytes(customer.usedBytes)}
+          </p>
+        </div>
+
+        {/* Unlimited toggle */}
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />
+          Unlimited data
+        </label>
+
+        {/* Quota input */}
+        {!unlimited && (
+          <div className="space-y-2">
+            <Label htmlFor="edit-sub-quota">Quota</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="edit-sub-quota"
+                type="number"
+                min={1}
+                max={100000}
+                value={gb}
+                onChange={(e) => setGb(Math.max(1, Number(e.target.value) || 1))}
+                className="w-32"
+              />
+              <span className="text-sm text-muted-foreground">GB every 30 days</span>
+            </div>
+          </div>
+        )}
+
+        {/* Expiry date */}
+        <div className="space-y-2">
+          <Label htmlFor="edit-sub-expiry">Expiry Date</Label>
+          <Input
+            id="edit-sub-expiry"
+            type="date"
+            value={expiry}
+            onChange={(e) => setExpiry(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Leave blank for no expiry. A past date disables the customer immediately.
+          </p>
+        </div>
+
+        {KEY_UNCHANGED_NOTE}
+
+        <div className="flex gap-3">
+          <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+          <Button
+            className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600"
+            onClick={handleSave}
+          >
+            Save Changes
+          </Button>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+// ── Add Customer ──────────────────────────────────────────────────────────────
+
+export function AddCustomerDialog({
+  servers,
+  onClose,
+  onConfirm,
+}: {
+  servers: Array<{ id: string; name: string }>;
+  onClose: () => void;
+  onConfirm: (params: {
+    name: string;
+    serverId: string;
+    keyMode: "new" | "existing";
+    existingKeyId?: string | null;
+    quotaGB: number | null;
+    expiryDate: string | null;
+  }) => void | Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [serverId, setServerId] = useState(servers[0]?.id ?? "");
+  const [keyMode, setKeyMode] = useState<"new" | "existing">("new");
+  const [unmanagedKeys, setUnmanagedKeys] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedKeyId, setSelectedKeyId] = useState("");
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [unlimited, setUnlimited] = useState(true);
+  const [gb, setGb] = useState(100);
+  const [expiry, setExpiry] = useState("");
+
+  // Load unmanaged keys when mode=existing + server changes
+  useEffect(() => {
+    if (keyMode !== "existing" || !serverId) return;
+    setLoadingKeys(true);
+    import("@/lib/sync").then(({ listUnmanagedKeys }) =>
+      listUnmanagedKeys(serverId)
+        .then((keys) => {
+          setUnmanagedKeys(keys);
+          setSelectedKeyId(keys[0]?.id ?? "");
+        })
+        .catch(() => setUnmanagedKeys([]))
+        .finally(() => setLoadingKeys(false))
+    );
+  }, [keyMode, serverId]);
+
+  function handleCreate() {
+    const quotaGB = unlimited ? null : gb;
+    const expiryIso = expiry ? new Date(expiry + "T23:59:59Z").toISOString() : null;
+    void onConfirm({
+      name: name.trim(),
+      serverId,
+      keyMode,
+      existingKeyId: keyMode === "existing" ? selectedKeyId : null,
+      quotaGB,
+      expiryDate: expiryIso,
+    });
+  }
+
+  const canSubmit = name.trim().length > 0 &&
+    serverId &&
+    (keyMode === "new" || (keyMode === "existing" && !!selectedKeyId));
+
+  return (
+    <Shell title="Add Customer" icon={<Users className="w-5 h-5 text-white" />} onClose={onClose}>
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        {/* Name */}
+        <div className="space-y-2">
+          <Label htmlFor="add-cust-name">Customer Name</Label>
+          <Input
+            id="add-cust-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Ko Aung"
+          />
+        </div>
+
+        {/* Server */}
+        <div className="space-y-2">
+          <Label htmlFor="add-cust-server">Server</Label>
+          <select
+            id="add-cust-server"
+            value={serverId}
+            onChange={(e) => setServerId(e.target.value)}
+            className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+          >
+            {servers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+
+        {/* Key mode */}
+        <div className="space-y-2">
+          <Label>Key Mode</Label>
+          <div className="flex gap-3">
+            {(["new", "existing"] as const).map((m) => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="keyMode"
+                  value={m}
+                  checked={keyMode === m}
+                  onChange={() => setKeyMode(m)}
+                />
+                {m === "new" ? "Create New Outline Key" : "Use Existing Outline Key"}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Existing key selector */}
+        {keyMode === "existing" && (
+          <div className="space-y-2">
+            <Label htmlFor="add-cust-key">Existing Key (unmanaged only)</Label>
+            {loadingKeys ? (
+              <p className="text-xs text-muted-foreground">Loading keys…</p>
+            ) : unmanagedKeys.length === 0 ? (
+              <p className="text-xs text-destructive">No unmanaged keys found on this server.</p>
+            ) : (
+              <select
+                id="add-cust-key"
+                value={selectedKeyId}
+                onChange={(e) => setSelectedKeyId(e.target.value)}
+                className="w-full h-10 rounded-md border bg-background px-3 text-sm"
+              >
+                {unmanagedKeys.map((k) => (
+                  <option key={k.id} value={k.id}>ID {k.id} — {k.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        {/* Quota */}
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />
+          Unlimited data
+        </label>
+        {!unlimited && (
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={100000}
+              value={gb}
+              onChange={(e) => setGb(Math.max(1, Number(e.target.value) || 1))}
+              className="w-32"
+            />
+            <span className="text-sm text-muted-foreground">GB every 30 days</span>
+          </div>
+        )}
+
+        {/* Expiry */}
+        <div className="space-y-2">
+          <Label htmlFor="add-cust-expiry">Expiry Date (optional)</Label>
+          <Input
+            id="add-cust-expiry"
+            type="date"
+            value={expiry}
+            onChange={(e) => setExpiry(e.target.value)}
+          />
+        </div>
+
+        {KEY_UNCHANGED_NOTE}
+
+        <div className="flex gap-3">
+          <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+          <Button
+            className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600"
+            disabled={!canSubmit}
+            onClick={handleCreate}
+          >
+            Create Customer
           </Button>
         </div>
       </div>

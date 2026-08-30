@@ -85,6 +85,10 @@ export async function GET(req: NextRequest) {
             // Only on explicit request.
             accessUrl: includeRaw ? record.accessUrl : undefined,
 
+            // configuredQuotaBytes is always the admin-set allowance, never
+            // the decreasing "remaining" value.  Used by the UI to show the
+            // plan quota without confusion.
+            configuredQuotaBytes: meta?.quotaBytes ?? null,
             quotaBytes: usage?.quotaBytes ?? meta?.quotaBytes ?? null,
             usedBytes: usage?.totalUsedBytes ?? liveBytes,
             carriedBytes: usage?.carriedBytes ?? 0,

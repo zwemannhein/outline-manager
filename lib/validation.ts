@@ -242,3 +242,26 @@ export function getEnv(): Env {
 export function resetEnv(): void {
   validatedEnv = null;
 }
+
+/** Admin: create a managed customer without a public order. */
+export const adminCreateCustomerSchema = z.object({
+  name: z.string().min(1).max(100),
+  serverId: z.string().min(1),
+  /** "new" = create a fresh Outline key; "existing" = attach an existing unmanaged key. */
+  keyMode: z.enum(["new", "existing"]),
+  /** Required when keyMode = "existing". */
+  existingKeyId: z.string().min(1).optional().nullable(),
+  /** null = unlimited, number = GB per 30-day cycle. */
+  quotaGB: z.number().min(0).max(100000).nullable(),
+  /** ISO datetime string, or null for no expiry. */
+  expiryDate: z.string().datetime().nullable().optional(),
+});
+
+/** Admin: edit both quota and expiry together (replaces the old quota-only dialog). */
+export const editSubscriptionSchema = z.object({
+  token: z.string().regex(/^[0-9a-f]{32}$/, "Invalid dynamic token"),
+  /** null = unlimited */
+  quotaGB: z.number().min(0).max(100000).nullable(),
+  /** ISO datetime string, or null to remove expiry. */
+  expiryDate: z.string().datetime().nullable().optional(),
+});
