@@ -114,17 +114,26 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
+    const s = (v: unknown) => String(v ?? "").toLowerCase();
     return rows.filter(
       (r) =>
-        r.name.toLowerCase().includes(q) ||
-        r.serverName.toLowerCase().includes(q) ||
-        r.outlineKeyId.includes(q)
+        s(r.name).includes(q) ||
+        s(r.serverName).includes(q) ||
+        s(r.outlineKeyId).includes(q) ||
+        s(r.token).includes(q) ||
+        s(r.orderId).includes(q) ||
+        s(r.status).includes(q)
     );
   }, [rows, search]);
 
   async function copyKey(row: DynamicCustomerRow) {
+    const url = row.dynamicUrl;
+    if (!url?.startsWith("ssconf://")) {
+      toast({ title: "Permanent key not ready", description: "The key is still syncing. Try again shortly.", variant: "destructive" });
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(row.dynamicUrl);
+      await navigator.clipboard.writeText(url);
       setCopied(row.token);
       setTimeout(() => setCopied(null), 1500);
       toast({ title: "Permanent key copied", description: row.name });
@@ -296,14 +305,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                   <Button
                     size="sm"
                     onClick={() => void copyKey(row)}
-                    className="bg-gradient-to-r from-blue-600 to-purple-600"
+                    disabled={!row.dynamicUrl?.startsWith("ssconf://")}
+                    className="bg-gradient-to-r from-blue-600 to-purple-600 disabled:opacity-50"
+                    title={row.dynamicUrl?.startsWith("ssconf://") ? "Copy permanent ssconf:// key" : "Permanent key not ready yet"}
                   >
                     {copied === row.token ? (
                       <Check className="w-4 h-4 mr-1.5" />
                     ) : (
                       <Copy className="w-4 h-4 mr-1.5" />
                     )}
-                    Copy Key
+                    {row.dynamicUrl?.startsWith("ssconf://") ? "Copy Key" : "Key not ready"}
                   </Button>
                 </div>
 
