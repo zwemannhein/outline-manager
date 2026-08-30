@@ -62,6 +62,21 @@ function usagePercent(row: DynamicCustomerRow): number {
   return Math.min(100, Math.round((row.usedBytes / row.quotaBytes) * 100));
 }
 
+/** Derive subscription duration from cyclesTotal: "1 Month", "3 Months", etc. */
+function durationLabel(row: DynamicCustomerRow): string {
+  const n = row.cyclesTotal;
+  if (!n || n <= 0) return "—";
+  return n === 1 ? "1 Month" : `${n} Months`;
+}
+
+/** Recurring quota allowance: "100 GB / 30 days" or "Unlimited". */
+function quotaAllowanceLabel(row: DynamicCustomerRow): string {
+  if (row.quotaBytes === null) return "Unlimited";
+  const gb = row.quotaBytes / (1024 * 1024 * 1024);
+  const display = gb >= 1 ? `${Math.round(gb)} GB` : formatBytes(row.quotaBytes);
+  return `${display} / 30 days`;
+}
+
 function expiryLabel(row: DynamicCustomerRow): { text: string; tone: string } {
   if (!row.expiryDate) return { text: "No expiry", tone: "text-muted-foreground" };
   const ts = Date.parse(row.expiryDate);
@@ -326,10 +341,10 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                   <p className="text-xs font-mono break-all">{row.dynamicUrl}</p>
                 </div>
 
-                {/* Row 3: usage + cycle + expiry */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                {/* Row 3: usage + quota + duration + expiry */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                   <div>
-                    <p className="text-muted-foreground mb-1">Usage this cycle</p>
+                    <p className="text-muted-foreground mb-1">Usage</p>
                     <p className={row.quotaExhausted ? "text-destructive font-medium" : "font-medium"}>
                       {usageLabel(row)}
                     </p>
@@ -341,18 +356,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         />
                       </div>
                     )}
-                    {row.carriedBytes > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        includes {formatBytes(row.carriedBytes)} carried from a previous server
-                      </p>
-                    )}
                   </div>
 
                   <div>
-                    <p className="text-muted-foreground mb-1">Cycle</p>
-                    <p className="font-medium">
-                      {row.cyclesUsed ?? "?"} of {row.cyclesTotal ?? "?"}
-                    </p>
+                    <p className="text-muted-foreground mb-1">Quota</p>
+                    <p className="font-medium">{quotaAllowanceLabel(row)}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-muted-foreground mb-1">Duration</p>
+                    <p className="font-medium">{durationLabel(row)}</p>
                   </div>
 
                   <div>
@@ -405,7 +418,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
 
                   <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setQuotaFor(row)}>
                     <Gauge className="w-3.5 h-3.5 mr-1.5" />
-                    Quota
+                    Change Quota
                   </Button>
 
                   <Button variant="outline" size="sm" disabled={isBusy(row)} onClick={() => setRenewFor(row)}>
