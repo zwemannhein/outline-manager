@@ -1,14 +1,12 @@
 /**
- * GET /api/k/<token> — production dynamic config resolver.
+ * GET /k/<token> — production dynamic config resolver.
  *
  * Returns the customer's current Shadowsocks configuration in the official
- * Outline JSON format.  This is the endpoint the Outline client fetches every
- * time it needs the current server address — the permanent URL the customer
- * holds is:
+ * Outline JSON format. The permanent URL the customer holds is:
  *
  *     ssconf://outline-manager.vercel.app/k/<32-hex-token>
  *
- * Security posture mirrors the Cloudflare Worker:
+ * Security posture:
  * - No authentication required (Outline clients cannot present credentials).
  * - Every failure returns an identical empty 404 so the endpoint cannot be
  *   used to enumerate or probe tokens.
