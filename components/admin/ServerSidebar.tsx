@@ -10,6 +10,7 @@ interface ServerSidebarProps {
   servers: OutlineServer[];
   activeId: string | null;
   onlineIds: Set<string>;
+  loading?: boolean;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onRemove: (id: string) => void;
@@ -20,6 +21,7 @@ export function ServerSidebar({
   servers,
   activeId,
   onlineIds,
+  loading = false,
   onSelect,
   onAdd,
   onRemove,
@@ -37,6 +39,7 @@ export function ServerSidebar({
     (e: React.MouseEvent, server: OutlineServer) => {
       e.stopPropagation();
       e.preventDefault();
+      if (loading) return;
       committingRef.current = false;
       setEditValue(server.name);
       setEditingId(server.id);
@@ -48,7 +51,7 @@ export function ServerSidebar({
         }
       }, 0);
     },
-    []
+    [loading]
   );
 
   const commitRename = useCallback(() => {
@@ -85,21 +88,25 @@ export function ServerSidebar({
   );
 
   return (
-    <aside className="flex h-full w-[min(88vw,18rem)] shrink-0 flex-col border-r bg-white shadow-xl shadow-slate-900/5 dark:bg-slate-950 lg:w-64 lg:shadow-none">
+    <aside aria-busy={loading} className="flex h-full w-[min(88vw,18rem)] shrink-0 flex-col border-r bg-white shadow-xl shadow-slate-900/5 dark:bg-slate-950 md:w-64 md:shadow-none">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-4 border-b">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold">Servers</span>
         </div>
-        <Button variant="ghost" size="icon" onClick={onAdd} title="Add server">
+        <Button variant="ghost" size="icon" onClick={onAdd} title="Add server" disabled={loading}>
           <Plus className="w-4 h-4" />
         </Button>
       </div>
 
       {/* Server list */}
       <nav className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
-        {servers.length === 0 && (
+        {loading && servers.length === 0 ? (
+          <div className="space-y-2 p-2" aria-label="Loading servers">
+            {[1, 2, 3].map((item) => <div key={item} className="h-11 animate-pulse rounded-xl bg-muted" />)}
+          </div>
+        ) : servers.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-8 px-4">
             No servers yet. Add one with the + button.
           </p>
@@ -179,18 +186,20 @@ export function ServerSidebar({
                   {/* Pencil: mousedown to avoid blur race */}
                   <button
                     onMouseDown={(e) => startEditing(e, server)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                    disabled={loading}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground disabled:opacity-0"
                     title="Rename server"
                     tabIndex={-1}
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                   <button
+                    disabled={loading}
                     onClick={(e) => {
                       e.stopPropagation();
                       onRemove(server.id);
                     }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive disabled:opacity-0"
                     title="Remove server"
                     tabIndex={-1}
                   >
@@ -206,7 +215,7 @@ export function ServerSidebar({
       {/* Footer */}
       <div className="px-4 py-3 border-t">
         <p className="text-xs text-muted-foreground">
-          {servers.length} server{servers.length !== 1 ? "s" : ""} configured
+          {loading ? "Refreshing servers…" : `${servers.length} server${servers.length !== 1 ? "s" : ""} configured`}
         </p>
       </div>
     </aside>

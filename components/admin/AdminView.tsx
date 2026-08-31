@@ -8,7 +8,7 @@ import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import { FirstRunPasswordSetup } from "./FirstRunPasswordSetup";
 import { SettingsPanel } from "./SettingsPanel";
 import { MonitoringPanel } from "./MonitoringPanel";
-import { addServer, loadServers, removeServer, updateServerName } from "@/lib/storage";
+import { addServer, removeServer, updateServerName } from "@/lib/storage";
 import {
   fetchAdminData,
   saveLocalData,
@@ -18,6 +18,7 @@ import {
   fetchSessionInfo,
 } from "@/lib/sync";
 import { uuid } from "@/lib/utils";
+import { resolveServerSelection, resolveSelectionAfterRemoval } from "@/lib/server-selection";
 import { useToast } from "@/hooks/use-toast";
 import {
   LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound, Users, Settings, Activity,
@@ -63,6 +64,13 @@ export function AdminView({ onLogout }: AdminViewProps) {
   }, []);
 
   useEffect(() => {
+    // Hydrate the stable sidebar immediately from the local cache while the
+    // server copy refreshes in the background.
+    const cached = loadLocalData();
+    if (cached.servers.length > 0) {
+      setServers(cached.servers);
+      setActiveId((prev) => resolveServerSelection(prev, cached.servers));
+    }
     setSyncing(true);
     fetchAdminData()
       .then((kvData) => {
@@ -76,14 +84,12 @@ export function AdminView({ onLogout }: AdminViewProps) {
         }
         saveLocalData(data);
         setServers(data.servers);
-        setActiveId((prev) =>
-          prev && data.servers.find((s) => s.id === prev) ? prev : (data.servers[0]?.id ?? "")
-        );
+        setActiveId((prev) => resolveServerSelection(prev, data.servers));
       })
       .catch(() => {
         const local = loadLocalData();
         setServers(local.servers);
-        setActiveId(local.servers[0]?.id ?? "");
+        setActiveId((prev) => resolveServerSelection(prev, local.servers));
       })
       .finally(() => setSyncing(false));
   }, []);
@@ -106,9 +112,10 @@ export function AdminView({ onLogout }: AdminViewProps) {
   }
 
   function handleRemoveServer(id: string) {
+    const previous = servers;
     const updated = removeServer(id);
     setServers(updated);
-    if (activeId === id) setActiveId(updated[0]?.id ?? "");
+    setActiveId((current) => resolveSelectionAfterRemoval(current, id, previous, updated));
     toast({ title: "Server removed" });
   }
 
@@ -141,24 +148,13 @@ export function AdminView({ onLogout }: AdminViewProps) {
     );
   }
 
-  if (syncing) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="text-center space-y-3 text-muted-foreground">
-          <RefreshCw className="w-6 h-6 animate-spin mx-auto" />
-          <p className="text-sm">Syncing server list…</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="relative flex h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -167,15 +163,16 @@ export function AdminView({ onLogout }: AdminViewProps) {
       {activeTab === "servers" && (
         <div
           className={`
-            fixed inset-y-0 left-0 z-30 lg:static lg:z-auto
+            fixed inset-y-0 left-0 z-30 md:static md:z-auto
             transform transition-transform duration-200
-            ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+            ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
           `}
         >
           <ServerSidebar
             servers={servers}
             activeId={activeId}
             onlineIds={onlineIds}
+            loading={syncing}
             onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
             onAdd={() => setShowAddDialog(true)}
             onRemove={handleRemoveServer}
@@ -194,7 +191,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="lg:hidden hover:bg-white/50 dark:hover:bg-gray-800/50 shrink-0 min-w-[44px] min-h-[44px]"
+                className="md:hidden hover:bg-white/50 dark:hover:bg-gray-800/50 shrink-0 min-w-[44px] min-h-[44px]"
                 onClick={() => setSidebarOpen((v) => !v)}
                 aria-label="Toggle server list"
               >
@@ -211,6 +208,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
+                  aria-label={tab.label}
                   aria-current={activeTab === tab.id ? "page" : undefined}
                   className={`
                     flex min-h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-semibold transition-colors sm:px-3 sm:text-sm
@@ -270,6 +268,16 @@ export function AdminView({ onLogout }: AdminViewProps) {
             server={activeServer}
             onOnlineChange={handleOnlineChange}
           />
+        ) : syncing ? (
+          <div className="relative flex-1 p-4 sm:p-6 lg:p-8" aria-label="Loading server details">
+            <div className="mx-auto max-w-6xl space-y-4 animate-pulse">
+              <div className="h-8 w-48 rounded-lg bg-muted" />
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {[1, 2, 3].map((item) => <div key={item} className="admin-card h-24 bg-muted/50" />)}
+              </div>
+              <div className="admin-card h-48 bg-muted/40" />
+            </div>
+          </div>
         ) : (
           <div className="relative flex-1 flex items-center justify-center p-4">
             <div className="text-center space-y-4 text-muted-foreground">

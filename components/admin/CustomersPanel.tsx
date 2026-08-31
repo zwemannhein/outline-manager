@@ -584,7 +584,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     </Button>
                   )}
 
-                  <DropdownMenu>
+                  <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="icon" className="ml-auto h-10 w-10" aria-label={`More actions for ${row.name}`}>
                         <MoreHorizontal className="h-4 w-4" />

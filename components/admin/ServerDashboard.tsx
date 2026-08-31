@@ -154,41 +154,8 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  if (loading && !info) {
-    return (
-      <div className="relative flex-1 flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="p-4 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg mx-auto w-fit">
-            <RefreshCw className="w-6 h-6 animate-spin text-white" />
-          </div>
-          <p className="text-sm text-muted-foreground font-medium">Connecting to {server.name}…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !info) {
-    return (
-      <div className="relative flex-1 flex items-center justify-center p-8">
-        <div className="text-center space-y-4 max-w-md">
-          <div className="p-4 rounded-full bg-gradient-to-br from-red-500 to-pink-600 shadow-lg mx-auto w-fit">
-            <AlertCircle className="w-10 h-10 text-white" />
-          </div>
-          <div>
-            <p className="font-semibold text-lg">Cannot reach server</p>
-            <p className="text-sm text-muted-foreground mt-1">{error}</p>
-          </div>
-          <Button 
-            onClick={load} 
-            variant="outline"
-            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white border-0 shadow-lg"
-          >
-            <RefreshCw className="w-4 h-4 mr-2" /> Retry
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const connecting = loading && !info;
+  const offline = !!error && !info;
 
   return (
     <div className="relative flex-1 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
@@ -199,7 +166,15 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{info?.name ?? server.name}</h1>
-              <Badge variant="success" className="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900">Online</Badge>
+              {connecting ? (
+                <Badge variant="secondary" className="gap-1.5">
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Connecting
+                </Badge>
+              ) : offline ? (
+                <Badge variant="destructive">Offline</Badge>
+              ) : (
+                <Badge variant="success" className="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900">Online</Badge>
+              )}
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate">
               {server.apiUrl.replace(/\/[^/]+$/, "")}
@@ -226,7 +201,9 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl font-bold sm:text-2xl">{keys.length}</p>
+              <p className={`text-xl font-bold sm:text-2xl ${connecting ? "text-muted-foreground animate-pulse" : ""}`}>
+                {connecting || offline ? "—" : keys.length}
+              </p>
             </CardContent>
           </Card>
           <Card className="admin-card">
@@ -236,7 +213,9 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl font-bold sm:text-2xl">{formatBytes(totalBytes)}</p>
+              <p className={`text-xl font-bold sm:text-2xl ${connecting ? "text-muted-foreground animate-pulse" : ""}`}>
+                {connecting || offline ? "—" : formatBytes(totalBytes)}
+              </p>
             </CardContent>
           </Card>
           <Card className="admin-card col-span-2 sm:col-span-1">
@@ -246,22 +225,31 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl font-bold sm:text-2xl">{info?.version ?? "—"}</p>
+              <p className={`text-xl font-bold sm:text-2xl ${connecting ? "text-muted-foreground animate-pulse" : ""}`}>
+                {info?.version ?? "—"}
+              </p>
             </CardContent>
           </Card>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 rounded-lg backdrop-blur-md bg-red-50/90 dark:bg-red-950/50 border border-red-200/50 dark:border-red-900/50 px-4 py-3 text-sm text-destructive shadow-lg">
+          <div className="flex items-center gap-2 rounded-xl bg-red-50/90 dark:bg-red-950/50 border border-red-200/50 dark:border-red-900/50 px-4 py-3 text-sm text-destructive">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            {error}
+            <span className="min-w-0 flex-1 break-words">{error}</span>
+            <Button variant="outline" size="sm" onClick={load} disabled={loading} className="shrink-0">
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Retry
+            </Button>
           </div>
         )}
       </div>
 
       {/* Scrollable Key List */}
       <div className="flex-1 overflow-y-auto px-4 pb-6 sm:px-6 lg:px-8">
-        <KeyTable
+        {offline ? (
+          <div className="admin-card flex min-h-40 items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            Server details remain selected. Retry when the server is reachable.
+          </div>
+        ) : <KeyTable
           keys={keys}
           metrics={metrics}
           keyMetas={keyMetas}
@@ -281,7 +269,7 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
             const key = keys.find((k) => k.id === keyId);
             setDialog({ type: "expiry", keyId, keyName: key?.name ?? "", currentExpiry });
           }}
-        />
+        />}
       </div>
 
       {/* Dialogs */}
