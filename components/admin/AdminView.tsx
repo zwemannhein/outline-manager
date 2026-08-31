@@ -174,42 +174,9 @@ export function AdminView({ onLogout }: AdminViewProps) {
   }
 
   return (
-    <div className="relative flex h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
-
-      {/* Mobile sidebar overlay */}
-      {activeTab === "servers" && sidebarOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Server sidebar — only shown on Servers tab */}
-      {activeTab === "servers" && (
-        <div
-          id="server-sidebar"
-          className={`
-            fixed inset-y-0 left-0 z-30 md:static md:z-auto
-            transform overflow-hidden transition-[transform,width] duration-200 md:translate-x-0
-            ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
-            ${serverSidebarExpanded ? "md:w-64" : "md:w-0"}
-          `}
-        >
-          <ServerSidebar
-            servers={servers}
-            activeId={activeId}
-            onlineIds={onlineIds}
-            loading={syncing}
-            onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
-            onAdd={() => setShowAddDialog(true)}
-            onRemove={handleRemoveServer}
-            onRename={handleRenameServer}
-          />
-        </div>
-      )}
-
-      {/* Main content */}
-      <div className="flex flex-col flex-1 min-w-0 relative">
+    <div className="relative h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
+      {/* Shared dashboard shell. Server-specific width lives below, in its tab only. */}
+      <div className="relative flex h-full w-full min-w-0 flex-col">
         {/* Top bar */}
         <header className="relative flex min-h-16 items-center justify-between border-b bg-white/95 px-2.5 py-2 shadow-sm shadow-slate-900/[0.03] backdrop-blur-md dark:bg-slate-950/95 sm:px-5">
           <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
@@ -293,51 +260,90 @@ export function AdminView({ onLogout }: AdminViewProps) {
           </div>
         </header>
 
-        {/* Content area */}
-        {activeTab === "orders" ? (
-          <OrdersPanel
-            authHeader={authHeader}
-            servers={servers.map((s) => ({ id: s.id, name: s.name }))}
-          />
-        ) : activeTab === "customers" ? (
-          <CustomersPanel servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
-        ) : activeTab === "settings" ? (
-          <SettingsPanel />
-        ) : activeTab === "monitoring" ? (
-          <MonitoringPanel />
-        ) : activeServer ? (
-          <ServerDashboard
-            key={activeServer.id}
-            server={activeServer}
-            onOnlineChange={handleOnlineChange}
-          />
-        ) : syncing ? (
-          <div className="relative flex-1 p-4 sm:p-6 lg:p-8" aria-label="Loading server details">
-            <div className="mx-auto max-w-6xl space-y-4 animate-pulse">
-              <div className="h-8 w-48 rounded-lg bg-muted" />
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {[1, 2, 3].map((item) => <div key={item} className="admin-card h-24 bg-muted/50" />)}
-              </div>
-              <div className="admin-card h-48 bg-muted/40" />
+        {/* Tab workspace: the split server layout never wraps another panel. */}
+        {activeTab === "servers" ? (
+          <div className="relative flex min-h-0 flex-1 overflow-hidden" data-server-workspace>
+            {/* Mobile overlay and sidebar are owned solely by the Servers workspace. */}
+            {sidebarOpen && (
+              <div
+                className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm md:hidden"
+                onClick={() => setSidebarOpen(false)}
+              />
+            )}
+
+            <div
+              id="server-sidebar"
+              className={`
+                fixed inset-y-0 left-0 z-30 md:static md:z-auto
+                transform overflow-hidden transition-[transform,width] duration-200 md:translate-x-0
+                ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+                ${serverSidebarExpanded ? "md:w-64" : "md:w-0"}
+              `}
+            >
+              <ServerSidebar
+                servers={servers}
+                activeId={activeId}
+                onlineIds={onlineIds}
+                loading={syncing}
+                onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
+                onAdd={() => setShowAddDialog(true)}
+                onRemove={handleRemoveServer}
+                onRename={handleRenameServer}
+              />
+            </div>
+
+            <div className="relative flex min-w-0 flex-1">
+              {activeServer ? (
+                <ServerDashboard
+                  key={activeServer.id}
+                  server={activeServer}
+                  onOnlineChange={handleOnlineChange}
+                />
+              ) : syncing ? (
+                <div className="relative flex-1 p-4 sm:p-6 lg:p-8" aria-label="Loading server details">
+                  <div className="mx-auto max-w-6xl space-y-4 animate-pulse">
+                    <div className="h-8 w-48 rounded-lg bg-muted" />
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {[1, 2, 3].map((item) => <div key={item} className="admin-card h-24 bg-muted/50" />)}
+                    </div>
+                    <div className="admin-card h-48 bg-muted/40" />
+                  </div>
+                </div>
+              ) : (
+                <div className="relative flex flex-1 items-center justify-center p-4">
+                  <div className="text-center space-y-4 text-muted-foreground">
+                    <div className="p-4 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg mx-auto w-fit">
+                      <Server className="w-8 h-8 text-white" />
+                    </div>
+                    <p className="text-sm font-medium">No servers configured yet.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAddDialog(true)}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white border-0 shadow-lg"
+                    >
+                      Add your first server
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
-          <div className="relative flex-1 flex items-center justify-center p-4">
-            <div className="text-center space-y-4 text-muted-foreground">
-              <div className="p-4 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg mx-auto w-fit">
-                <Server className="w-8 h-8 text-white" />
-              </div>
-              <p className="text-sm font-medium">No servers configured yet.</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddDialog(true)}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white border-0 shadow-lg"
-              >
-                Add your first server
-              </Button>
-            </div>
-          </div>
+          <main className="flex min-h-0 w-full flex-1" data-admin-panel={activeTab}>
+            {activeTab === "orders" ? (
+              <OrdersPanel
+                authHeader={authHeader}
+                servers={servers.map((s) => ({ id: s.id, name: s.name }))}
+              />
+            ) : activeTab === "customers" ? (
+              <CustomersPanel servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
+            ) : activeTab === "settings" ? (
+              <SettingsPanel />
+            ) : (
+              <MonitoringPanel />
+            )}
+          </main>
         )}
       </div>
 

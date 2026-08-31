@@ -340,7 +340,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
         </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none" aria-label="Filter customers">
+      <div className="flex flex-wrap gap-2 pb-1" aria-label="Filter customers">
         {(["all", "active", "disabled", "expired", "unlimited", "finite"] as CustomerFilter[]).map((value) => (
           <button
             key={value}
