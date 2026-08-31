@@ -1,0 +1,121 @@
+/**
+ * GET /api/v1/monitor
+ *
+ * Returns system health for: App, Redis, Telegram, Cron, Dynamic /k config.
+ * All checks run in parallel with Promise.allSettled so one failure never
+ * blocks the others.
+ *
+ * Cached in Redis for 30 s to avoid hammering external services.
+ * Requires admin JWT.
+ */
+
+export const runtime = "nodejs";
+
+import { NextRequest } from "next/server";
+import {
+  checkAuth,
+  handleApiError,
+  successResponse,
+  unauthorizedResponse,
+  getRedis,
+} from "@/lib/api-utils";
+import {
+  checkRedisHealth,
+  checkTelegramHealth,
+  checkDynamicConfigHealth,
+  checkCronHealth,
+  getAppHealth,
+  type HealthStatus,
+} from "@/lib/monitoring";
+import { getWriteBudget, countDirtyTokens } from "@/lib/kv-sync";
+
+const CACHE_KEY = "monitor:system:cache";
+const CACHE_TTL = 30; // seconds
+
+export async function GET(req: NextRequest) {
+  try {
+    const auth = await checkAuth(req);
+    if (!auth.authenticated) return unauthorizedResponse();
+
+    // Serve cached result if fresh.
+    const force = req.nextUrl.searchParams.get("force") === "1";
+    if (!force) {
+      try {
+        const cached = await getRedis().get<string>(CACHE_KEY);
+        if (cached) {
+          const parsed = typeof cached === "string" ? JSON.parse(cached) : cached;
+          return successResponse({ ...parsed, cached: true });
+        }
+      } catch { /* cache miss — proceed */ }
+    }
+
+    const baseUrl = getBaseUrl(req);
+    const startedAt = Date.now();
+
+    // Run all checks in parallel; a settled rejection yields a degraded result.
+    const [redisResult, telegramResult, dynResult, cronResult, budgetResult, dirtyResult] =
+      await Promise.allSettled([
+        checkRedisHealth(),
+        checkTelegramHealth(),
+        checkDynamicConfigHealth(baseUrl),
+        checkCronHealth(),
+        getWriteBudget(),
+        countDirtyTokens(),
+      ]);
+
+    const redis    = redisResult.status    === "fulfilled" ? redisResult.value    : { status: "critical" as HealthStatus, detail: "Check failed" };
+    const telegram = telegramResult.status === "fulfilled" ? telegramResult.value : { status: "warning"  as HealthStatus, detail: "Check failed", webhookConfigured: false, linkedApprovers: 0, pendingLinks: 0 };
+    const dynConfig = dynResult.status     === "fulfilled" ? dynResult.value      : { status: "critical" as HealthStatus, detail: "Check failed", checkedAt: new Date().toISOString() };
+    const cron     = cronResult.status     === "fulfilled" ? cronResult.value     : { status: "warning"  as HealthStatus, detail: "Check failed", summary: null };
+    const budget   = budgetResult.status   === "fulfilled" ? budgetResult.value   : null;
+    const dirtyCount = dirtyResult.status  === "fulfilled" ? dirtyResult.value    : 0;
+
+    const app = getAppHealth();
+
+    // Overall status: worst of all non-not_configured checks.
+    const statuses: HealthStatus[] = [
+      app.status, redis.status, dynConfig.status, cron.status,
+      // Telegram warning/offline never makes overall Critical by itself.
+      telegram.status === "critical" ? "warning" : telegram.status,
+    ].filter((s) => s !== "not_configured");
+
+    const overall: HealthStatus =
+      statuses.includes("critical") ? "critical" :
+      statuses.includes("warning")  ? "warning"  : "healthy";
+
+    const payload = {
+      checkedAt: new Date(startedAt).toISOString(),
+      overall,
+      app,
+      redis: {
+        ...redis,
+        kvBudget: budget
+          ? { used: budget.used, limit: budget.limit, remaining: budget.remaining, warn: budget.warn }
+          : null,
+        dirtyQueueSize: dirtyCount,
+      },
+      telegram,
+      cron,
+      dynamicConfig: dynConfig,
+      // AWS/server resource metrics: not configured in this project.
+      resourceMetrics: { status: "not_configured" as HealthStatus, detail: "AWS credentials not configured" },
+    };
+
+    // Cache for 30 s.
+    try {
+      await getRedis().set(CACHE_KEY, JSON.stringify(payload), { ex: CACHE_TTL });
+    } catch { /* non-fatal */ }
+
+    return successResponse({ ...payload, cached: false });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+function getBaseUrl(req: NextRequest): string {
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) return `https://${vercelUrl}`;
+  const host = req.headers.get("host") ?? "localhost:3000";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  return `${proto}://${host}`;
+}

@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
-  Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus,
+  Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus, Stethoscope,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import {
   type DynamicHealth,
 } from "@/lib/sync";
 import { MigrateServerDialog, EditSubscriptionDialog, AddCustomerDialog } from "./CustomerDialogs";
+import { DiagnoseDialog } from "./DiagnoseDialog";
 
 interface CustomersPanelProps {
   servers: Array<{ id: string; name: string }>;
@@ -138,6 +139,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const [migrateFor, setMigrateFor] = useState<DynamicCustomerRow | null>(null);
   const [editSubFor, setEditSubFor] = useState<DynamicCustomerRow | null>(null);
   const [addingCustomer, setAddingCustomer] = useState(false);
+  const [diagnoseFor, setDiagnoseFor] = useState<DynamicCustomerRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -510,6 +512,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     <span className="inline sm:hidden text-xs">Edit</span>
                   </Button>
 
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-[36px]"
+                    onClick={() => setDiagnoseFor(row)}
+                  >
+                    <Stethoscope className="w-3.5 h-3.5 sm:mr-1.5" />
+                    <span className="hidden sm:inline">Diagnose</span>
+                  </Button>
+
                   {row.cleanupPending && (
                     <Button
                       variant="outline"
@@ -636,6 +648,14 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
               });
             }
           }}
+        />
+      )}
+
+      {diagnoseFor && (
+        <DiagnoseDialog
+          token={diagnoseFor.token}
+          name={diagnoseFor.name}
+          onClose={() => setDiagnoseFor(null)}
         />
       )}
     </div>

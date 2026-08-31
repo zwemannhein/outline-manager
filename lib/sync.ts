@@ -713,3 +713,131 @@ export async function removeTelegramApprover(userId: string): Promise<void> {
   });
   if (!res.ok) throw new Error(await readError(res, "Could not remove approver"));
 }
+
+// ── System monitoring ─────────────────────────────────────────────────────────
+
+export type MonitorHealthStatus = "healthy" | "warning" | "critical" | "not_configured";
+
+export interface SystemHealth {
+  checkedAt: string;
+  cached: boolean;
+  overall: MonitorHealthStatus;
+  app: {
+    status: MonitorHealthStatus;
+    environment: string;
+    region: string;
+    commitSha?: string;
+  };
+  redis: {
+    status: MonitorHealthStatus;
+    latencyMs?: number;
+    detail?: string;
+    kvBudget: { used: number; limit: number; remaining: number; warn: boolean } | null;
+    dirtyQueueSize: number;
+  };
+  telegram: {
+    status: MonitorHealthStatus;
+    latencyMs?: number;
+    detail?: string;
+    botUsername?: string;
+    webhookConfigured: boolean;
+    linkedApprovers: number;
+    pendingLinks: number;
+  };
+  cron: {
+    status: MonitorHealthStatus;
+    detail?: string;
+    overdueMs?: number;
+    summary: {
+      lastStartedAt: string;
+      lastCompletedAt: string;
+      durationMs: number;
+      processed: number;
+      failed: number;
+      expiryProcessed: number;
+      quotaProcessed: number;
+      dirtySyncProcessed: number;
+    } | null;
+  };
+  dynamicConfig: {
+    status: MonitorHealthStatus;
+    latencyMs?: number;
+    detail?: string;
+    checkedAt: string;
+    httpStatus?: number;
+  };
+  resourceMetrics: { status: MonitorHealthStatus; detail?: string };
+}
+
+export interface OutlineServerHealth {
+  serverId: string;
+  name: string;
+  status: MonitorHealthStatus;
+  latencyMs?: number;
+  detail?: string;
+  totalKeys: number;
+  managedKeys: number;
+  unmanagedKeys: number;
+  activeCustomers: number;
+  disabledCustomers: number;
+  missingKeys: number;
+  duplicateMappings: number;
+  checkedAt: string;
+}
+
+export interface OutlineMonitorResult {
+  checkedAt: string;
+  cached: boolean;
+  overall: MonitorHealthStatus;
+  servers: OutlineServerHealth[];
+  resourceMetrics: { status: MonitorHealthStatus };
+}
+
+export type DiagCheckState = "pass" | "fail" | "warn" | "unknown";
+
+export interface DiagCheck {
+  label: string;
+  state: DiagCheckState;
+  detail?: string;
+}
+
+export interface DiagnoseResult {
+  token: string;
+  name: string;
+  status: string;
+  checks: DiagCheck[];
+  issues: string[];
+  suggestedAction?: string;
+  diagnosis: "no_issue" | "issues_found";
+  checkedAt: string;
+}
+
+export async function fetchSystemHealth(force = false): Promise<SystemHealth> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const url = force ? "/api/v1/monitor?force=1" : "/api/v1/monitor";
+  const res = await fetch(url, { headers: { Authorization: auth } });
+  if (!res.ok) throw new Error(await readError(res, "Could not load system health"));
+  return (await res.json()) as SystemHealth;
+}
+
+export async function fetchOutlineHealth(force = false): Promise<OutlineMonitorResult> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const url = force ? "/api/v1/monitor/outline?force=1" : "/api/v1/monitor/outline";
+  const res = await fetch(url, { headers: { Authorization: auth } });
+  if (!res.ok) throw new Error(await readError(res, "Could not load Outline health"));
+  return (await res.json()) as OutlineMonitorResult;
+}
+
+export async function diagnoseCustomer(token: string): Promise<DiagnoseResult> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/monitor/diagnose", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) throw new Error(await readError(res, "Diagnosis failed"));
+  return (await res.json()) as DiagnoseResult;
+}

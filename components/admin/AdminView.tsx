@@ -7,6 +7,7 @@ import { AddServerDialog } from "./Dialogs";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import { FirstRunPasswordSetup } from "./FirstRunPasswordSetup";
 import { SettingsPanel } from "./SettingsPanel";
+import { MonitoringPanel } from "./MonitoringPanel";
 import { addServer, loadServers, removeServer, updateServerName } from "@/lib/storage";
 import {
   fetchAdminData,
@@ -19,7 +20,7 @@ import {
 import { uuid } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
-  LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound, Users, Settings,
+  LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound, Users, Settings, Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrdersPanel } from "./OrdersPanel";
@@ -30,13 +31,14 @@ interface AdminViewProps {
   onLogout: () => void;
 }
 
-type AdminTab = "servers" | "customers" | "orders" | "settings";
+type AdminTab = "servers" | "customers" | "orders" | "settings" | "monitoring";
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
-  { id: "servers",   label: "Servers",   icon: <Server   className="w-4 h-4" /> },
-  { id: "customers", label: "Customers", icon: <Users    className="w-4 h-4" /> },
-  { id: "orders",    label: "Orders",    icon: <ShoppingBag className="w-4 h-4" /> },
-  { id: "settings",  label: "Settings",  icon: <Settings className="w-4 h-4" /> },
+  { id: "servers",    label: "Servers",    icon: <Server      className="w-4 h-4" /> },
+  { id: "customers",  label: "Customers",  icon: <Users       className="w-4 h-4" /> },
+  { id: "orders",     label: "Orders",     icon: <ShoppingBag className="w-4 h-4" /> },
+  { id: "monitoring", label: "Monitoring", icon: <Activity    className="w-4 h-4" /> },
+  { id: "settings",   label: "Settings",   icon: <Settings    className="w-4 h-4" /> },
 ];
 
 export function AdminView({ onLogout }: AdminViewProps) {
@@ -267,6 +269,8 @@ export function AdminView({ onLogout }: AdminViewProps) {
           <CustomersPanel servers={servers.map((s) => ({ id: s.id, name: s.name }))} />
         ) : activeTab === "settings" ? (
           <SettingsPanel />
+        ) : activeTab === "monitoring" ? (
+          <MonitoringPanel />
         ) : activeServer ? (
           <ServerDashboard
             key={activeServer.id}

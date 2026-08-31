@@ -25,6 +25,7 @@ import { timingSafeEqual, createHash } from "crypto";
 import { handleApiError, successResponse } from "@/lib/api-utils";
 import { processExpiries, processCycleRollovers } from "@/lib/quota-cycles";
 import { drainDirtyDynamicRecords } from "@/lib/kv-sync";
+import { writeCronSummary } from "@/lib/monitoring";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("cron");
@@ -69,6 +70,14 @@ async function runTick() {
   const drain = await drainDirtyDynamicRecords(DRAIN_LIMIT);
 
   const durationMs = Date.now() - startedAt;
+
+  // Persist a compact monitoring summary — best-effort, never crashes cron.
+  await writeCronSummary({
+    startedAt,
+    expiry:   { processed: expiry.expired    ?? 0, failed: expiry.failed   ?? 0 },
+    rollover: { processed: rollover.rolled   ?? 0, failed: rollover.failed ?? 0 },
+    drain:    { synced:    drain.synced      ?? 0, failed: drain.failed    ?? 0 },
+  });
 
   logger.info({ expiry, rollover, drain, durationMs }, "Cron tick complete");
 
