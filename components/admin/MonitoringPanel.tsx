@@ -96,9 +96,9 @@ function SectionCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-xl border bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm overflow-hidden">
+    <div className="admin-card overflow-hidden">
       <button
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left min-h-[44px]"
+        className="flex min-h-14 w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -111,7 +111,7 @@ function SectionCard({
           ? <ChevronUp className="w-4 h-4 shrink-0 text-muted-foreground" />
           : <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground" />}
       </button>
-      {open && <div className="px-4 pb-4 pt-1 space-y-1.5 text-sm border-t">{children}</div>}
+      {open && <div className="space-y-1.5 border-t bg-slate-50/60 px-4 pb-4 pt-3 text-sm dark:bg-slate-900/30">{children}</div>}
     </div>
   );
 }
@@ -146,9 +146,9 @@ function SummaryCards({ health, outline }: { health: SystemHealth; outline: Outl
     { label: "Dynamic Config", status: health.dynamicConfig.status },
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
       {cards.map((c) => (
-        <div key={c.label} className="flex items-center gap-2 rounded-lg border bg-white/60 dark:bg-gray-900/60 px-3 py-2 min-w-0">
+        <div key={c.label} className="admin-card flex min-h-16 min-w-0 flex-col items-start justify-center gap-1.5 px-3 py-2.5">
           {statusDot(c.status)}
           <span className="text-xs font-medium truncate">{c.label}</span>
         </div>
@@ -215,16 +215,17 @@ export function MonitoringPanel() {
   const lt = tg.loginTelemetry;
 
   return (
-    <div className="relative flex-1 overflow-y-auto p-3 sm:p-5 space-y-4">
+    <div className="admin-page">
+      <div className="admin-page-inner">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shrink-0">
-            <Activity className="w-4 h-4 text-white" />
+          <div className="rounded-xl bg-primary/10 p-2.5 text-primary shrink-0">
+            <Activity className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base sm:text-lg font-semibold leading-tight">System Monitoring</h2>
-            <p className="text-xs text-muted-foreground">
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">System Monitoring</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
               {health.cached ? "Cached · " : "Live · "}Checked {ago(health.checkedAt)}
             </p>
           </div>
@@ -391,6 +392,7 @@ export function MonitoringPanel() {
           <p className="text-xs text-amber-600 py-2">Could not load Outline server health.</p>
         </SectionCard>
       )}
+      </div>
     </div>
   );
 }

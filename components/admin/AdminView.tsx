@@ -153,13 +153,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
   }
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 dark:from-gray-900 dark:via-purple-900/20 dark:to-blue-900/20 relative">
-      {/* Background blobs — pointer-events-none so they never capture taps */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 -left-4 w-96 h-96 bg-purple-300 dark:bg-purple-500 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-20 animate-blob" />
-        <div className="absolute top-0 -right-4 w-96 h-96 bg-blue-300 dark:bg-blue-500 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-20 animate-blob animation-delay-2000" />
-        <div className="absolute -bottom-8 left-20 w-96 h-96 bg-pink-300 dark:bg-pink-500 rounded-full mix-blend-multiply dark:mix-blend-soft-light filter blur-xl opacity-20 animate-blob animation-delay-4000" />
-      </div>
+    <div className="relative flex h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
@@ -193,7 +187,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 relative">
         {/* Top bar */}
-        <header className="relative flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 backdrop-blur-md bg-white/70 dark:bg-gray-900/70 border-b border-white/20 shrink-0 shadow-sm">
+        <header className="relative flex min-h-16 items-center justify-between border-b bg-white/95 px-2.5 py-2 shadow-sm shadow-slate-900/[0.03] backdrop-blur-md dark:bg-slate-950/95 sm:px-5">
           <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
             {/* Hamburger — only on Servers tab where sidebar exists */}
             {activeTab === "servers" && (
@@ -210,7 +204,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
 
             {/* Tab bar — scrollable on very small screens */}
             <nav
-              className="flex items-center gap-0.5 overflow-x-auto scrollbar-none backdrop-blur-sm bg-white/50 dark:bg-gray-800/50 rounded-lg p-0.5 min-w-0"
+              className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 scrollbar-none dark:bg-slate-900"
               aria-label="Admin navigation"
             >
               {TABS.map((tab) => (
@@ -219,16 +213,15 @@ export function AdminView({ onLogout }: AdminViewProps) {
                   onClick={() => setActiveTab(tab.id)}
                   aria-current={activeTab === tab.id ? "page" : undefined}
                   className={`
-                    flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium
-                    transition-all whitespace-nowrap min-h-[36px] min-w-[44px] shrink-0
+                    flex min-h-10 min-w-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-semibold transition-colors sm:px-3 sm:text-sm
                     ${activeTab === tab.id
-                      ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/40 dark:hover:bg-gray-700/40"
+                      ? "bg-white text-primary shadow-sm dark:bg-slate-800 dark:text-blue-300"
+                      : "text-muted-foreground hover:bg-white/70 hover:text-foreground dark:hover:bg-slate-800/70"
                     }
                   `}
                 >
                   {tab.icon}
-                  <span className="hidden xs:inline sm:inline">{tab.label}</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
                 </button>
               ))}
             </nav>

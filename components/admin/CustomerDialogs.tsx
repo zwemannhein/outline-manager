@@ -28,20 +28,23 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+      <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-[2px]" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl bg-white dark:bg-gray-900 shadow-2xl border p-5 sm:p-6 space-y-4 sm:space-y-5 max-h-[90dvh] overflow-y-auto"
+        className="relative max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl border bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl shadow-slate-950/20 dark:bg-slate-950 sm:max-w-md sm:rounded-2xl sm:p-6"
       >
-        <div className="flex items-start justify-between">
+        <div className="mb-5 flex items-start justify-between gap-3 border-b pb-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600">{icon}</div>
-            <h2 className="text-lg font-semibold">{title}</h2>
+            <div className="rounded-xl bg-primary p-2.5 shadow-sm">{icon}</div>
+            <div>
+              <p className="admin-eyebrow">Customer management</p>
+              <h2 className="text-lg font-bold tracking-tight">{title}</h2>
+            </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
+          <button type="button" onClick={onClose} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -500,7 +503,7 @@ export function AddCustomerDialog({
 
   return (
     <Shell title="Add Customer" icon={<Users className="w-5 h-5 text-white" />} onClose={onClose}>
-      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+      <div className="space-y-5">
         {/* Name */}
         <div className="space-y-2">
           <Label htmlFor="add-cust-name">Customer Name</Label>
@@ -528,9 +531,9 @@ export function AddCustomerDialog({
         {/* Key mode */}
         <div className="space-y-2">
           <Label>Key Mode</Label>
-          <div className="flex gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             {(["new", "existing"] as const).map((m) => (
-              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <label key={m} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border bg-background px-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5">
                 <input
                   type="radio"
                   name="keyMode"
@@ -568,7 +571,7 @@ export function AddCustomerDialog({
         )}
 
         {/* Quota */}
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border bg-background px-3 text-sm">
           <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />
           Unlimited data
         </label>
@@ -599,7 +602,7 @@ export function AddCustomerDialog({
 
         {KEY_UNCHANGED_NOTE}
 
-        <div className="flex gap-3">
+        <div className="sticky bottom-0 -mx-1 flex gap-3 border-t bg-white/95 px-1 pt-4 backdrop-blur dark:bg-slate-950/95">
           <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
           <Button
             className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600"

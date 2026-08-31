@@ -243,20 +243,21 @@ export function SettingsPanel() {
   }
 
   return (
-    <div className="relative flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 max-w-2xl mx-auto w-full">
+    <div className="admin-page">
+      <div className="mx-auto w-full max-w-3xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shrink-0">
-          <Settings className="w-5 h-5 text-white" />
+        <div className="rounded-xl bg-primary/10 p-2.5 text-primary shrink-0">
+          <Settings className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <p className="text-xs text-muted-foreground">Admin configuration</p>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Settings</h1>
+          <p className="text-sm text-muted-foreground">Admin configuration</p>
         </div>
       </div>
 
       {/* Telegram Approvers section */}
-      <section className="space-y-4">
+      <section className="admin-card space-y-4 p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <MessageCircle className="w-4 h-4 text-blue-500 shrink-0" />
@@ -268,7 +269,7 @@ export function SettingsPanel() {
             </Button>
             <Button
               size="sm"
-              className="bg-gradient-to-r from-blue-600 to-purple-600 text-xs"
+              className="text-xs"
               onClick={() => setShowAdd(true)}
             >
               <UserPlus className="w-3.5 h-3.5 mr-1.5" />
@@ -317,17 +318,17 @@ export function SettingsPanel() {
             {approvers.map((a) => (
               <div
                 key={a.userId}
-                className="flex items-center justify-between gap-3 rounded-lg border bg-white/70 dark:bg-gray-900/70 px-4 py-3"
+                className="flex items-center justify-between gap-3 rounded-xl border bg-background px-4 py-3"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium text-sm truncate">
-                      {a.username ? `@${a.username}` : `User ${a.userId}`}
+                      {a.username ? `@${a.username}` : "Telegram user"}
                     </span>
                     <Badge className="bg-green-600 hover:bg-green-600 text-xs">Linked</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    ID: {a.userId} · Linked {new Date(a.linkedAt).toLocaleDateString()}
+                    Linked {new Date(a.linkedAt).toLocaleDateString()}
                   </p>
                 </div>
                 <Button
@@ -336,7 +337,7 @@ export function SettingsPanel() {
                   className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30 min-w-[44px] min-h-[44px]"
                   disabled={removing === a.userId}
                   onClick={() => void handleRemove(a.userId)}
-                  aria-label={`Remove ${a.username || a.userId}`}
+                  aria-label={a.username ? `Remove @${a.username}` : "Remove Telegram approver"}
                 >
                   {removing === a.userId ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -356,6 +357,7 @@ export function SettingsPanel() {
           onLinked={() => void load()}
         />
       )}
+      </div>
     </div>
   );
 }

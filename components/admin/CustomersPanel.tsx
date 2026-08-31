@@ -15,8 +15,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
   Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus, Stethoscope,
-} from "lucide-react";import { Button } from "@/components/ui/button";
+  MoreHorizontal, Search,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/utils";
 import {
@@ -42,6 +48,7 @@ interface CustomersPanelProps {
 }
 
 type Busy = { token: string; action: string } | null;
+type CustomerFilter = "all" | "active" | "disabled" | "expired" | "unlimited" | "finite";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +100,7 @@ function expiryLabel(row: DynamicCustomerRow): { text: string; tone: string } {
 
 function CustomerSkeleton() {
   return (
-    <div className="rounded-xl border bg-white/70 dark:bg-gray-900/70 p-4 space-y-3 animate-pulse">
+    <div className="admin-card space-y-4 p-4 animate-pulse sm:p-5">
       <div className="flex justify-between gap-3">
         <div className="space-y-2 flex-1">
           <div className="h-4 bg-muted rounded w-32" />
@@ -127,6 +134,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [rawSearch, setRawSearch] = useState("");
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<CustomerFilter>("all");
 
   // Debounce: update search state 250 ms after the user stops typing.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,20 +171,32 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   useEffect(() => { void load(); }, [load]);
 
   // Client-side filter — no network on every keystroke.
+  const counts = useMemo(() => ({
+    all: rows.length,
+    active: rows.filter((r) => r.status === "active").length,
+    disabled: rows.filter((r) => r.status === "disabled").length,
+    expired: rows.filter((r) => r.status === "expired").length,
+    unlimited: rows.filter((r) => r.quotaBytes === null).length,
+    finite: rows.filter((r) => r.quotaBytes !== null).length,
+  }), [rows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
     const s = (v: unknown) => String(v ?? "").toLowerCase();
-    return rows.filter(
-      (r) =>
+    return rows.filter((r) => {
+      const matchesFilter = filter === "all" ||
+        (filter === "unlimited" ? r.quotaBytes === null :
+          filter === "finite" ? r.quotaBytes !== null : r.status === filter);
+      const matchesSearch = !q ||
         s(r.name).includes(q) ||
         s(r.serverName).includes(q) ||
         s(r.outlineKeyId).includes(q) ||
         s(r.token).includes(q) ||
         s(r.orderId).includes(q) ||
-        s(r.status).includes(q)
-    );
-  }, [rows, search]);
+        s(r.status).includes(q);
+      return matchesFilter && matchesSearch;
+    });
+  }, [rows, search, filter]);
 
   async function copyKey(row: DynamicCustomerRow) {
     const url = row.dynamicUrl;
@@ -278,46 +298,68 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   };
 
   return (
-    <div className="relative flex-1 overflow-y-auto p-3 sm:p-5 space-y-4">
+    <div className="admin-page">
+      <div className="admin-page-inner">
       {/* Header */}
-      <div className="flex flex-col xs:flex-row gap-3">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         {/* Title */}
         <div className="flex items-center gap-2 min-w-0">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shrink-0">
-            <Users className="w-4 h-4 text-white" />
+          <div className="rounded-xl bg-primary/10 p-2.5 text-primary shrink-0">
+            <Users className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-base sm:text-lg font-semibold leading-tight">Customers</h2>
-            <p className="text-xs text-muted-foreground">
-              {rows.length} {rows.length === 1 ? "identity" : "identities"}
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Customers</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Manage {rows.length} permanent {rows.length === 1 ? "identity" : "identities"}
             </p>
           </div>
         </div>
 
         {/* Controls — stack on 320px, row on wider */}
-        <div className="flex flex-wrap items-center gap-2 xs:ml-auto">
-          <input
+        <div className="flex flex-wrap items-center gap-2 md:ml-auto">
+          <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
             type="search"
             value={rawSearch}
             onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="Search…"
+            placeholder="Search name, server or key…"
             aria-label="Search customers"
-            className="h-9 rounded-md border bg-background px-3 text-base sm:text-sm w-full xs:w-40 sm:w-48 min-w-0"
-            style={{ fontSize: "16px" }} /* prevent iOS zoom */
+            className="h-10 pl-9"
           />
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="min-h-[36px]">
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="min-h-10" aria-label="Refresh customers">
             <RefreshCw className={`w-4 h-4 ${loading && rows.length > 0 ? "animate-spin" : ""}`} />
             <span className="ml-1.5 hidden sm:inline">Refresh</span>
           </Button>
           <Button
             size="sm"
-            className="bg-gradient-to-r from-blue-600 to-purple-600 min-h-[36px]"
+            className="min-h-10"
             onClick={() => setAddingCustomer(true)}
           >
             <UserPlus className="w-4 h-4 mr-1.5" />
             Add
           </Button>
         </div>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none" aria-label="Filter customers">
+        {(["all", "active", "disabled", "expired", "unlimited", "finite"] as CustomerFilter[]).map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setFilter(value)}
+            aria-pressed={filter === value}
+            className={`inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              filter === value
+                ? "border-primary/20 bg-primary text-primary-foreground"
+                : "bg-white text-muted-foreground hover:text-foreground dark:bg-slate-950"
+            }`}
+          >
+            <span className="capitalize">{value}</span>
+            <span className={filter === value ? "text-white/75" : "text-muted-foreground/75"}>{counts[value]}</span>
+          </button>
+        ))}
       </div>
 
       {/* Health warnings */}
@@ -349,7 +391,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           <p className="text-sm">
             {rows.length === 0
               ? "No customers yet. Approve an order or add one manually."
-              : "No customers match that search."}
+              : "No customers match the current search or filter."}
           </p>
         </div>
       ) : (
@@ -363,7 +405,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
             return (
               <div
                 key={row.token}
-                className="rounded-xl border bg-white/70 dark:bg-gray-900/70 backdrop-blur-sm p-3 sm:p-4 space-y-3"
+                className="admin-card space-y-4 p-4 transition-shadow hover:shadow-md sm:p-5"
               >
                 {/* Row 1: identity + copy key button */}
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -400,21 +442,22 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     size="sm"
                     onClick={() => void copyKey(row)}
                     disabled={!row.dynamicUrl?.startsWith("ssconf://")}
-                    className="bg-gradient-to-r from-blue-600 to-purple-600 disabled:opacity-50 min-h-[36px] shrink-0"
+                    className="min-h-10 shrink-0 px-4"
+                    aria-label={`${row.dynamicUrl?.startsWith("ssconf://") ? "Copy permanent key for" : "Permanent key not ready for"} ${row.name}`}
                   >
                     {copied === row.token ? (
-                      <Check className="w-4 h-4 sm:mr-1.5" />
+                      <Check className="mr-1.5 h-4 w-4" />
                     ) : (
-                      <Copy className="w-4 h-4 sm:mr-1.5" />
+                      <Copy className="mr-1.5 h-4 w-4" />
                     )}
-                    <span className="hidden sm:inline">
+                    <span>
                       {row.dynamicUrl?.startsWith("ssconf://") ? "Copy Key" : "Not ready"}
                     </span>
                   </Button>
                 </div>
 
                 {/* Row 2: permanent URL — truncates cleanly on mobile */}
-                <div className="rounded-lg bg-muted/50 px-3 py-2 min-w-0">
+                <div className="min-w-0 rounded-xl border bg-slate-50 px-3.5 py-2.5 dark:bg-slate-900/60">
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
                     Permanent key
                   </p>
@@ -451,14 +494,24 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                   </div>
                 </div>
 
-                {/* Row 4: actions — wrapping flex, all 44px touch targets */}
-                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-0.5">
+                {/* Frequent actions stay visible; lower-frequency actions live in the overflow menu. */}
+                <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
+                    className="min-h-10"
+                    onClick={() => setEditSubFor(row)}
+                  >
+                    <Gauge className="mr-1.5 h-3.5 w-3.5" />
+                    Edit Subscription
+                  </Button>
                   {row.status === "active" ? (
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-[36px]"
+                      className="min-h-10"
                       onClick={() =>
                         void run(
                           row, "disable",
@@ -469,14 +522,14 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       }
                     >
                       <Ban className="w-3.5 h-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Disable</span>
+                      <span>Disable</span>
                     </Button>
                   ) : row.status !== "revoked" ? (
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-[36px]"
+                      className="min-h-10"
                       onClick={() =>
                         void run(
                           row, "enable",
@@ -487,62 +540,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       }
                     >
                       <Play className="w-3.5 h-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Enable</span>
+                      <span>Enable</span>
                     </Button>
                   ) : null}
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy || row.status !== "active"}
-                    className="min-h-[36px]"
-                    onClick={() => setMigrateFor(row)}
-                  >
-                    <ArrowRightLeft className="w-3.5 h-3.5 sm:mr-1.5" />
-                    <span className="hidden sm:inline">Migrate</span>
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    className="min-h-[36px]"
-                    onClick={() => setEditSubFor(row)}
-                  >
-                    <Gauge className="w-3.5 h-3.5 sm:mr-1.5" />
-                    <span className="hidden sm:inline">Edit Sub</span>
-                    <span className="inline sm:hidden text-xs">Edit</span>
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="min-h-[36px]"
-                    onClick={() => setDiagnoseFor(row)}
-                  >
-                    <Stethoscope className="w-3.5 h-3.5 sm:mr-1.5" />
-                    <span className="hidden sm:inline">Diagnose</span>
-                  </Button>
-
-                  {/* Delete — destructive, always visible, placed after non-destructive actions */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    className="min-h-[36px] text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
-                    onClick={() => setDeleteFor(row)}
-                    aria-label={`Delete ${row.name}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5 sm:mr-1.5" />
-                    <span className="hidden sm:inline">Delete</span>
-                  </Button>
 
                   {row.cleanupPending && (
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-[36px]"
+                      className="min-h-10"
                       onClick={() =>
                         void run(
                           row, "cleanup",
@@ -553,7 +560,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       }
                     >
                       <Trash2 className="w-3.5 h-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Clean up</span>
+                      <span>Clean up</span>
                     </Button>
                   )}
 
@@ -562,7 +569,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       variant="ghost"
                       size="sm"
                       disabled={busy}
-                      className="min-h-[36px]"
+                      className="min-h-10"
                       onClick={() =>
                         void run(
                           row, "resync",
@@ -573,25 +580,32 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       }
                     >
                       <RefreshCw className="w-3.5 h-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Resync</span>
+                      <span>Resync</span>
                     </Button>
                   )}
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground ml-auto min-h-[36px]"
-                    onClick={() => void toggleReveal(row)}
-                  >
-                    {revealed[row.token] ? (
-                      <EyeOff className="w-3.5 h-3.5 sm:mr-1.5" />
-                    ) : (
-                      <Eye className="w-3.5 h-3.5 sm:mr-1.5" />
-                    )}
-                    <span className="hidden sm:inline">
-                      {revealed[row.token] ? "Hide" : "Reveal raw"}
-                    </span>
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="icon" className="ml-auto h-10 w-10" aria-label={`More actions for ${row.name}`}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => setDiagnoseFor(row)}>
+                        <Stethoscope className="h-4 w-4" /> Diagnose
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={busy || row.status !== "active"} onSelect={() => setMigrateFor(row)}>
+                        <ArrowRightLeft className="h-4 w-4" /> Migrate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void toggleReveal(row)}>
+                        {revealed[row.token] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        {revealed[row.token] ? "Hide raw key" : "Reveal raw key"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem destructive disabled={busy} onSelect={() => setDeleteFor(row)}>
+                        <Trash2 className="h-4 w-4" /> Delete customer
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {revealed[row.token] && (
@@ -703,6 +717,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           }}
         />
       )}
+      </div>
     </div>
   );
 }

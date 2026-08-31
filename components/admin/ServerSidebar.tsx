@@ -85,7 +85,7 @@ export function ServerSidebar({
   );
 
   return (
-    <aside className="flex flex-col w-screen sm:w-64 shrink-0 border-r bg-card h-full">
+    <aside className="flex h-full w-[min(88vw,18rem)] shrink-0 flex-col border-r bg-white shadow-xl shadow-slate-900/5 dark:bg-slate-950 lg:w-64 lg:shadow-none">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-4 border-b">
         <div className="flex items-center gap-2">
@@ -113,7 +113,7 @@ export function ServerSidebar({
             <div
               key={server.id}
               className={cn(
-                "group flex items-center gap-2 rounded-md px-3 py-2.5 transition-colors",
+                "group flex min-h-11 items-center gap-2 rounded-xl px-3 py-2.5 transition-colors",
                 isEditing
                   ? "bg-accent"
                   : isActive

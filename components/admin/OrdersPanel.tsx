@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { RefreshCw, CheckCircle2, XCircle, Clock, Copy, Check, AlertCircle, ShoppingBag } from "lucide-react";
+import { RefreshCw, CheckCircle2, XCircle, Clock, Copy, Check, AlertCircle, ShoppingBag, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { DEFAULT_PLANS } from "@/lib/types";
 import { buildDynamicUrl as buildCustomerKeyUrl } from "@/lib/dynamic-url";
@@ -36,6 +37,8 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
   const [selectedServer, setSelectedServer] = useState<string>(servers[0]?.id ?? "");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -159,19 +162,29 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
     }
   }
 
-  const pending = orders.filter((o) => o.status === "pending");
-  const processed = orders.filter((o) => o.status !== "pending");
+  const q = search.trim().toLowerCase();
+  const visibleOrders = orders.filter((o) => {
+    const matchesFilter = filter === "all" || o.status === filter;
+    const matchesSearch = !q || [o.name, o.kpayRef, o.plan, o.id].some((value) => String(value ?? "").toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
+  });
+  const pending = visibleOrders.filter((o) => o.status === "pending");
+  const processed = visibleOrders.filter((o) => o.status !== "pending");
+  const totalPending = orders.filter((o) => o.status === "pending").length;
 
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
+    <div className="relative flex-1 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
       {/* Fixed Header */}
-      <div className="flex-shrink-0 p-3 sm:p-6 pb-4">
+      <div className="flex-shrink-0 p-4 pb-3 sm:p-6 sm:pb-4 lg:px-8">
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Key Orders</h1>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><ShoppingBag className="h-5 w-5" /></div>
+            <div>
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Key Orders</h1>
             <p className="text-sm text-muted-foreground">
-              <span className="font-semibold text-amber-600 dark:text-amber-400">{pending.length} pending</span> · {processed.length} processed
+              <span className="font-semibold text-amber-600 dark:text-amber-400">{totalPending} pending</span> · {orders.length - totalPending} processed
             </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {servers.length > 1 && (
@@ -198,8 +211,22 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
         </div>
       </div>
 
+      <div className="flex-shrink-0 px-4 pb-4 sm:px-6 lg:px-8">
+        <div className="admin-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, payment reference or plan…" aria-label="Search orders" className="h-10 pl-9" />
+          </div>
+          <div className="flex gap-1 overflow-x-auto rounded-xl bg-muted p-1 scrollbar-none" aria-label="Filter orders">
+            {(["all", "pending", "approved", "rejected"] as const).map((value) => (
+              <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`min-h-9 shrink-0 rounded-lg px-3 text-xs font-semibold capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${filter === value ? "bg-white text-foreground shadow-sm dark:bg-slate-800" : "text-muted-foreground hover:text-foreground"}`}>{value}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Scrollable Orders List */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-6 pb-6 space-y-6">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 sm:px-6 lg:px-8 space-y-6">
         
         {/* Error Banner */}
         {error && (
@@ -227,14 +254,8 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
 
         {/* Loading State */}
         {loading && (
-          <div className="text-center py-20">
-            <div className="relative inline-flex items-center justify-center">
-              <div className="absolute w-20 h-20 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 opacity-20 animate-ping" />
-              <div className="relative p-5 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-2xl">
-                <RefreshCw className="w-10 h-10 text-white animate-spin" />
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground font-medium mt-6">Loading orders...</p>
+          <div className="space-y-3" aria-label="Loading orders">
+            {[1, 2, 3].map((item) => <div key={item} className="admin-card h-36 animate-pulse bg-muted/60" />)}
           </div>
         )}
 
@@ -260,7 +281,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
               : DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.description ?? "";
             const isProcessing = processing === order.id;
             return (
-              <div key={order.id} className="group rounded-2xl backdrop-blur-md bg-gradient-to-br from-white/90 to-blue-50/50 dark:from-gray-900/90 dark:to-blue-950/30 border-2 border-amber-200/50 dark:border-amber-900/50 shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 p-5 space-y-4">
+              <div key={order.id} className="admin-card space-y-4 border-amber-200/80 p-4 sm:p-5 dark:border-amber-900/70">
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -275,15 +296,15 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                       </code>
                     </div>
                   </div>
-                  <Badge className="shrink-0 bg-gradient-to-r from-amber-500 to-orange-500 text-white border-0 shadow-lg px-3 py-1">
+                  <Badge className="shrink-0 border-0 bg-amber-500 px-3 py-1 text-white">
                     <Clock className="w-3 h-3 mr-1" />
                     Pending
                   </Badge>
                 </div>
 
                 {/* Plan Info */}
-                <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/30 dark:to-purple-950/30 border border-blue-200/50 dark:border-blue-900/50">
-                  <Badge className="bg-gradient-to-r from-blue-600 to-purple-600 text-white border-0 shadow-md text-xs font-semibold px-3 py-1">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-muted/40 p-3">
+                  <Badge className="border-0 bg-primary px-3 py-1 text-xs font-semibold text-white">
                     {planLabel}
                   </Badge>
                   <span className="text-sm font-medium text-muted-foreground">{planDesc}</span>
@@ -299,7 +320,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
                 <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                   <Button
                     size="sm" 
-                    className="flex-1 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white shadow-lg hover:shadow-xl transition-all duration-300 h-10 font-semibold"
+                    className="h-11 flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
                     onClick={() => handleApprove(order.id)}
                     disabled={isProcessing}
                   >
@@ -351,7 +372,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
               ? `${order.customDataLimitGB ?? "?"} GB`
               : DEFAULT_PLANS.find((p: { id: string }) => p.id === order.plan)?.description ?? "";
             return (
-              <div key={order.id} className="rounded-2xl backdrop-blur-md bg-white/60 dark:bg-gray-900/60 border border-gray-200/50 dark:border-gray-700/50 shadow-md hover:shadow-lg transition-all duration-300 p-4 space-y-3 opacity-90 hover:opacity-100">
+              <div key={order.id} className="admin-card space-y-3 p-4">
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -416,7 +437,7 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
         </div>
       )}
 
-      {!loading && orders.length === 0 && (
+      {!loading && visibleOrders.length === 0 && (
         <div className="text-center py-24">
           <div className="relative inline-flex items-center justify-center mb-6">
             <div className="absolute w-24 h-24 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 opacity-10 animate-pulse" />
@@ -425,10 +446,10 @@ export function OrdersPanel({ authHeader, servers }: OrdersPanelProps) {
             </div>
           </div>
           <h3 className="text-lg font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
-            No Orders Yet
+            {orders.length === 0 ? "No Orders Yet" : "No Matching Orders"}
           </h3>
           <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-            When customers place orders, they'll appear here for your approval.
+            {orders.length === 0 ? "When customers place orders, they'll appear here for your approval." : "No orders match the current search or filter."}
           </p>
         </div>
       )}

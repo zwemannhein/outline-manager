@@ -42,7 +42,7 @@ export function DeleteCustomerDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Delete Customer"
-        className="relative w-full sm:max-w-md bg-white dark:bg-gray-900 rounded-t-2xl sm:rounded-2xl shadow-2xl border p-5 sm:p-6 space-y-4 max-h-[90dvh] overflow-y-auto"
+        className="relative max-h-[92dvh] w-full space-y-4 overflow-y-auto rounded-t-3xl border bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl shadow-slate-950/20 dark:bg-slate-950 sm:max-w-md sm:rounded-2xl sm:p-6"
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
@@ -98,7 +98,7 @@ export function DeleteCustomerDialog({
         </ul>
 
         {/* Actions */}
-        <div className="flex gap-2 pt-1">
+        <div className="sticky bottom-0 -mx-1 flex gap-2 border-t bg-white/95 px-1 pt-4 backdrop-blur dark:bg-slate-950/95">
           <Button
             variant="outline"
             className="flex-1 min-h-[44px]"

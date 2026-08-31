@@ -191,14 +191,14 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
   }
 
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
+    <div className="relative flex-1 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
       {/* Fixed Header and Stats */}
-      <div className="flex-shrink-0 p-3 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex-shrink-0 space-y-4 p-4 sm:p-6 lg:px-8">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{info?.name ?? server.name}</h1>
+              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{info?.name ?? server.name}</h1>
               <Badge variant="success" className="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900">Online</Badge>
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate">
@@ -219,34 +219,34 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
 
         {/* Stats — 2 cols on mobile, 3 on sm+ */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <Card className="backdrop-blur-md bg-white/80 dark:bg-gray-900/80 border-white/20 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="admin-card">
             <CardHeader className="pb-1 pt-3 px-3 sm:px-6 sm:pt-6 sm:pb-2">
               <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500" /> Keys
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{keys.length}</p>
+              <p className="text-xl font-bold sm:text-2xl">{keys.length}</p>
             </CardContent>
           </Card>
-          <Card className="backdrop-blur-md bg-white/80 dark:bg-gray-900/80 border-white/20 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="admin-card">
             <CardHeader className="pb-1 pt-3 px-3 sm:px-6 sm:pt-6 sm:pb-2">
               <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500" /> Data Used
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{formatBytes(totalBytes)}</p>
+              <p className="text-xl font-bold sm:text-2xl">{formatBytes(totalBytes)}</p>
             </CardContent>
           </Card>
-          <Card className="col-span-2 sm:col-span-1 backdrop-blur-md bg-white/80 dark:bg-gray-900/80 border-white/20 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="admin-card col-span-2 sm:col-span-1">
             <CardHeader className="pb-1 pt-3 px-3 sm:px-6 sm:pt-6 sm:pb-2">
               <CardTitle className="text-xs sm:text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                 <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-500" /> Version
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 sm:px-6 sm:pb-6">
-              <p className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{info?.version ?? "—"}</p>
+              <p className="text-xl font-bold sm:text-2xl">{info?.version ?? "—"}</p>
             </CardContent>
           </Card>
         </div>
@@ -260,7 +260,7 @@ export function ServerDashboard({ server, onOnlineChange }: ServerDashboardProps
       </div>
 
       {/* Scrollable Key List */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-6 pb-6">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 sm:px-6 lg:px-8">
         <KeyTable
           keys={keys}
           metrics={metrics}
