@@ -36,6 +36,7 @@ import {
 } from "@/lib/login-attempts";
 import { sendLoginApprovalRequest } from "@/lib/telegram";
 import { getApproverChatIds } from "@/lib/telegram-approvers";
+import { writeLoginTelemetry } from "@/lib/monitoring";
 import { createLogger, maskId } from "@/lib/logger";
 
 const logger = createLogger("auth");
@@ -97,13 +98,28 @@ export async function POST(req: NextRequest) {
     }
 
     // Build notification target list.
-    // Priority: linked approvers from Redis → fallback TELEGRAM_CHAT_ID env var.
+    // ALWAYS include both:
+    //   1. All linked approvers from Redis (tg:approvers)
+    //   2. TELEGRAM_CHAT_ID env var (legacy / verified binding)
+    // Deduplication ensures a chatId that appears in both is only messaged once.
+    // The env var is NEVER skipped, even when Redis approvers exist — this is the
+    // fix for the bug where a stale/unreachable Redis record caused the working
+    // env-var channel to be bypassed entirely.
     const linkedChatIds = await getApproverChatIds().catch(() => [] as string[]);
     const staticIds = (process.env.TELEGRAM_CHAT_ID ?? "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    const chatIds = linkedChatIds.length > 0 ? linkedChatIds : staticIds;
+
+    // Merge and deduplicate — preserve order (linked first, then static).
+    const seen = new Set<string>();
+    const chatIds: string[] = [];
+    for (const id of [...linkedChatIds, ...staticIds]) {
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        chatIds.push(id);
+      }
+    }
 
     if (chatIds.length === 0) {
       logger.error("No Telegram approvers configured; cannot complete admin login approval");
@@ -116,6 +132,9 @@ export async function POST(req: NextRequest) {
 
     const browserSummary = describeUserAgent(rawUserAgent);
     let anyDelivered = false;
+    let deliverSucceeded = 0;
+    let deliverFailed = 0;
+    let lastFailureCategory = "";
 
     for (const chatId of chatIds) {
       const result = await sendLoginApprovalRequest(
@@ -128,9 +147,24 @@ export async function POST(req: NextRequest) {
           requestedAt: Date.now(),
         }
       );
-      if (result.ok) anyDelivered = true;
-      else logger.warn({ chatId, error: result.error }, "Failed to deliver login approval request");
+      if (result.ok) {
+        anyDelivered = true;
+        deliverSucceeded++;
+      } else {
+        deliverFailed++;
+        lastFailureCategory = result.error ?? "unknown";
+        logger.warn({ chatId: "[redacted]", error: result.error }, "Failed to deliver login approval request");
+      }
     }
+
+    // Persist delivery telemetry for System Monitoring — no secrets stored.
+    await writeLoginTelemetry({
+      challengeCreatedAt: new Date().toISOString(),
+      recipientsAttempted: chatIds.length,
+      deliverSucceeded,
+      deliverFailed,
+      lastFailureCategory: deliverFailed > 0 ? lastFailureCategory : "",
+    }).catch(() => {});
 
     if (!anyDelivered) {
       throw new AppError(

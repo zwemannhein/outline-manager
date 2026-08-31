@@ -1,7 +1,8 @@
 /**
  * GET /api/v1/monitor
  *
- * Returns system health for: App, Redis, Telegram, Cron, Dynamic /k config.
+ * Returns system health for: App, Redis, Telegram, Cron, Dynamic /k config,
+ * login delivery telemetry, and Redis due-job counts.
  * All checks run in parallel with Promise.allSettled so one failure never
  * blocks the others.
  *
@@ -25,9 +26,11 @@ import {
   checkDynamicConfigHealth,
   checkCronHealth,
   getAppHealth,
+  readLoginTelemetry,
+  getRedisDueJobCounts,
   type HealthStatus,
 } from "@/lib/monitoring";
-import { getWriteBudget, countDirtyTokens } from "@/lib/kv-sync";
+import { getWriteBudget } from "@/lib/kv-sync";
 
 const CACHE_KEY = "monitor:system:cache";
 const CACHE_TTL = 30; // seconds
@@ -37,7 +40,6 @@ export async function GET(req: NextRequest) {
     const auth = await checkAuth(req);
     if (!auth.authenticated) return unauthorizedResponse();
 
-    // Serve cached result if fresh.
     const force = req.nextUrl.searchParams.get("force") === "1";
     if (!force) {
       try {
@@ -52,30 +54,43 @@ export async function GET(req: NextRequest) {
     const baseUrl = getBaseUrl(req);
     const startedAt = Date.now();
 
-    // Run all checks in parallel; a settled rejection yields a degraded result.
-    const [redisResult, telegramResult, dynResult, cronResult, budgetResult, dirtyResult] =
-      await Promise.allSettled([
-        checkRedisHealth(),
-        checkTelegramHealth(),
-        checkDynamicConfigHealth(baseUrl),
-        checkCronHealth(),
-        getWriteBudget(),
-        countDirtyTokens(),
-      ]);
+    // All checks in parallel — one failure never blocks the others.
+    const [
+      redisResult,
+      telegramResult,
+      dynResult,
+      cronResult,
+      budgetResult,
+      loginTelemResult,
+      dueJobsResult,
+    ] = await Promise.allSettled([
+      checkRedisHealth(),
+      checkTelegramHealth(),
+      checkDynamicConfigHealth(baseUrl),
+      checkCronHealth(),
+      getWriteBudget(),
+      readLoginTelemetry(),
+      getRedisDueJobCounts(),
+    ]);
 
-    const redis    = redisResult.status    === "fulfilled" ? redisResult.value    : { status: "critical" as HealthStatus, detail: "Check failed" };
-    const telegram = telegramResult.status === "fulfilled" ? telegramResult.value : { status: "warning"  as HealthStatus, detail: "Check failed", webhookConfigured: false, linkedApprovers: 0, pendingLinks: 0 };
-    const dynConfig = dynResult.status     === "fulfilled" ? dynResult.value      : { status: "critical" as HealthStatus, detail: "Check failed", checkedAt: new Date().toISOString() };
-    const cron     = cronResult.status     === "fulfilled" ? cronResult.value     : { status: "warning"  as HealthStatus, detail: "Check failed", summary: null };
-    const budget   = budgetResult.status   === "fulfilled" ? budgetResult.value   : null;
-    const dirtyCount = dirtyResult.status  === "fulfilled" ? dirtyResult.value    : 0;
+    const redis     = redisResult.status    === "fulfilled" ? redisResult.value    : { status: "critical" as HealthStatus, detail: "Check failed" };
+    const telegram  = telegramResult.status === "fulfilled" ? telegramResult.value : { status: "warning"  as HealthStatus, detail: "Check failed", webhookConfigured: false, linkedApprovers: 0, pendingLinks: 0 };
+    const dynConfig = dynResult.status      === "fulfilled" ? dynResult.value      : { status: "critical" as HealthStatus, detail: "Check failed", checkedAt: new Date().toISOString() };
+    const cron      = cronResult.status     === "fulfilled" ? cronResult.value     : { status: "warning"  as HealthStatus, detail: "Check failed", summary: null };
+    const budget    = budgetResult.status   === "fulfilled" ? budgetResult.value   : null;
+    const loginTelemetry = loginTelemResult.status === "fulfilled" ? loginTelemResult.value : null;
+    const dueJobs   = dueJobsResult.status  === "fulfilled" ? dueJobsResult.value  : { expiryDue: 0, cycleDue: 0, dirtyQueue: 0 };
 
     const app = getAppHealth();
 
     // Overall status: worst of all non-not_configured checks.
+    // Telegram warning/offline alone never makes overall Critical.
+    // not_configured (AWS metrics) never degrades overall status.
     const statuses: HealthStatus[] = [
-      app.status, redis.status, dynConfig.status, cron.status,
-      // Telegram warning/offline never makes overall Critical by itself.
+      app.status,
+      redis.status,
+      dynConfig.status,
+      cron.status,
       telegram.status === "critical" ? "warning" : telegram.status,
     ].filter((s) => s !== "not_configured");
 
@@ -92,16 +107,23 @@ export async function GET(req: NextRequest) {
         kvBudget: budget
           ? { used: budget.used, limit: budget.limit, remaining: budget.remaining, warn: budget.warn }
           : null,
-        dirtyQueueSize: dirtyCount,
+        dirtyQueueSize: dueJobs.dirtyQueue,
+        dueJobs: {
+          expiryDue: dueJobs.expiryDue,
+          cycleDue:  dueJobs.cycleDue,
+        },
       },
-      telegram,
+      telegram: {
+        ...telegram,
+        // Login delivery telemetry — no secrets, only aggregate counts.
+        loginTelemetry,
+      },
       cron,
       dynamicConfig: dynConfig,
       // AWS/server resource metrics: not configured in this project.
       resourceMetrics: { status: "not_configured" as HealthStatus, detail: "AWS credentials not configured" },
     };
 
-    // Cache for 30 s.
     try {
       await getRedis().set(CACHE_KEY, JSON.stringify(payload), { ex: CACHE_TTL });
     } catch { /* non-fatal */ }

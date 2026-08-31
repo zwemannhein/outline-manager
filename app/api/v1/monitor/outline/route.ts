@@ -2,16 +2,17 @@
  * GET /api/v1/monitor/outline
  *
  * Per-server Outline health: API reachability, key counts, managed/unmanaged
- * detection, and basic consistency checks.
+ * detection, basic consistency checks, and VPN port TCP reachability.
  *
  * READ-ONLY. Never modifies keys, quotas, or customer records.
  * Requires admin JWT.
- * Cached for 30 s in Redis.
+ * Cached 30 s in Redis.
  */
 
 export const runtime = "nodejs";
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import net from "net";
 import {
   checkAuth,
   handleApiError,
@@ -29,9 +30,50 @@ import {
   getTokenByOutlineKey,
 } from "@/lib/dynamic-keys";
 import { CHECK_TIMEOUT_MS, type HealthStatus } from "@/lib/monitoring";
+import type { ServerInfo } from "@/lib/types";
 
 const CACHE_KEY = "monitor:outline:cache";
 const CACHE_TTL = 30;
+const PORT_CHECK_TIMEOUT_MS = 4000;
+
+// ── VPN port TCP reachability ─────────────────────────────────────────────────
+
+export type PortStatus = "open" | "timeout" | "refused" | "unknown";
+
+/**
+ * TCP-connect check for the VPN access port.
+ * Reports OPEN / TIMEOUT / REFUSED — never claims UDP health.
+ * Vercel runs in a Node.js environment so net.connect works server-side.
+ */
+function checkPortReachable(host: string, port: number): Promise<{ status: PortStatus; latencyMs: number }> {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const socket = new net.Socket();
+    let settled = false;
+
+    function done(status: PortStatus) {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ status, latencyMs: Date.now() - t0 });
+    }
+
+    socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
+    socket.on("connect", () => done("open"));
+    socket.on("timeout", () => done("timeout"));
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      done(err.code === "ECONNREFUSED" ? "refused" : "timeout");
+    });
+
+    try {
+      socket.connect(port, host);
+    } catch {
+      done("unknown");
+    }
+  });
+}
+
+// ── Per-server check ──────────────────────────────────────────────────────────
 
 export interface OutlineServerHealth {
   serverId: string;
@@ -44,8 +86,15 @@ export interface OutlineServerHealth {
   unmanagedKeys: number;
   activeCustomers: number;
   disabledCustomers: number;
-  missingKeys: number;       // managed records whose Outline key was not found
-  duplicateMappings: number; // >1 managed record pointing to the same Outline key
+  missingKeys: number;
+  duplicateMappings: number;
+  vpnEndpoint?: {
+    host: string;
+    port: number;
+    portStatus: PortStatus;
+    portLatencyMs: number;
+    note: string;
+  };
   checkedAt: string;
 }
 
@@ -56,11 +105,9 @@ async function checkServer(
 ): Promise<OutlineServerHealth> {
   const checkedAt = new Date().toISOString();
 
-  // Wrap entire check so one server never throws for the caller.
   try {
     const t0 = Date.now();
 
-    // Parallel: server info + key list.
     const [infoResult, keysResult] = await Promise.allSettled([
       withTimeout(getServerInfo(serverId), CHECK_TIMEOUT_MS),
       withTimeout(listAccessKeys(serverId), CHECK_TIMEOUT_MS),
@@ -82,30 +129,25 @@ async function checkServer(
     const outlineKeys = keysResult.value;
     const outlineKeyIds = new Set(outlineKeys.map((k) => k.id));
 
-    // Records for THIS server only.
     const serverRecords = dynamicRecords.filter(
       (r) => r.serverId === serverId && r.status !== "revoked"
     );
 
-    // Count per-status.
     const activeCustomers   = serverRecords.filter((r) => r.status === "active").length;
     const disabledCustomers = serverRecords.filter(
       (r) => r.status === "disabled" || r.status === "expired"
     ).length;
 
-    // Missing keys: managed record whose outlineKeyId is not on the server.
     const missingKeys = serverRecords.filter(
       (r) => !outlineKeyIds.has(r.outlineKeyId)
     ).length;
 
-    // Unmanaged: Outline keys with no matching managed record.
     let unmanagedCount = 0;
     for (const key of outlineKeys) {
       const token = await getTokenByOutlineKey(serverId, key.id).catch(() => null);
       if (!token) unmanagedCount++;
     }
 
-    // Duplicate mappings: multiple records pointing to the same Outline key ID.
     const keyIdCounts = new Map<string, number>();
     for (const r of serverRecords) {
       keyIdCounts.set(r.outlineKeyId, (keyIdCounts.get(r.outlineKeyId) ?? 0) + 1);
@@ -131,6 +173,35 @@ async function checkServer(
       status = "warning";
     }
 
+    // VPN endpoint TCP reachability — use hostnameForAccessKeys + portForNewAccessKeys
+    // from server info when available. Falls back to graceful unknown.
+    let vpnEndpoint: OutlineServerHealth["vpnEndpoint"];
+    if (infoResult.status === "fulfilled") {
+      const info = infoResult.value as ServerInfo;
+      const host = info.hostnameForAccessKeys;
+      const port = info.portForNewAccessKeys;
+      if (host && port) {
+        const portCheck = await checkPortReachable(host, port).catch(
+          () => ({ status: "unknown" as PortStatus, latencyMs: 0 })
+        );
+        vpnEndpoint = {
+          host,
+          port,
+          portStatus: portCheck.status,
+          portLatencyMs: portCheck.latencyMs,
+          // Be honest: TCP open does NOT confirm UDP Shadowsocks works.
+          note: "TCP-only — does not confirm Shadowsocks/UDP connectivity",
+        };
+        if (portCheck.status === "timeout") {
+          issues.push(`VPN port ${port} TCP timeout — may be firewalled`);
+          if (status === "healthy") status = "warning";
+        } else if (portCheck.status === "refused") {
+          issues.push(`VPN port ${port} TCP refused`);
+          if (status === "healthy") status = "warning";
+        }
+      }
+    }
+
     return {
       serverId, name, checkedAt, latencyMs,
       status,
@@ -142,8 +213,9 @@ async function checkServer(
       disabledCustomers,
       missingKeys,
       duplicateMappings,
+      vpnEndpoint,
     };
-  } catch (err) {
+  } catch {
     return {
       serverId, name, checkedAt,
       status: "critical",
@@ -154,6 +226,8 @@ async function checkServer(
     };
   }
 }
+
+// ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   try {
@@ -176,7 +250,6 @@ export async function GET(req: NextRequest) {
       listDynamicRecords().catch(() => []),
     ]);
 
-    // Check all servers in parallel.
     const results = await Promise.all(
       servers.map((s) => checkServer(s.id, s.name, dynamicRecords))
     );
@@ -190,8 +263,7 @@ export async function GET(req: NextRequest) {
       checkedAt: new Date().toISOString(),
       overall,
       servers: results,
-      // Resource metrics require AWS credentials — not configured.
-      resourceMetrics: { status: "not_configured" as HealthStatus },
+      resourceMetrics: { status: "not_configured" as HealthStatus, detail: "AWS credentials not configured — CPU/RAM/Disk not available" },
     };
 
     try {

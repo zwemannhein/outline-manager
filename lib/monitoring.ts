@@ -308,3 +308,110 @@ export function getAppHealth(): AppHealth {
     commitSha: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7),
   };
 }
+
+// ── Login delivery telemetry ──────────────────────────────────────────────────
+//
+// Redis key: monitor:login:last  HASH
+//   challengeCreatedAt    ISO timestamp
+//   recipientsAttempted   number (how many chatIds were targeted)
+//   deliverSucceeded      number
+//   deliverFailed         number
+//   lastFailureCategory   string (Telegram error description, never a chat_id)
+//
+// TTL: 7 days — enough to diagnose "approval did not arrive" long after the fact,
+// without accumulating indefinitely.
+//
+// SECURITY: no chat_id, no user_id, no bot token, no login token stored here.
+// Only aggregate delivery counts and a sanitised error category.
+
+export const MONITOR_LOGIN_KEY = "monitor:login:last";
+export const LOGIN_TELEMETRY_TTL = 7 * 24 * 60 * 60; // 7 days
+
+export interface LoginTelemetry {
+  challengeCreatedAt: string;
+  recipientsAttempted: number;
+  deliverSucceeded: number;
+  deliverFailed: number;
+  /** Sanitised Telegram error description — never a credential. */
+  lastFailureCategory: string;
+}
+
+/**
+ * Persist a login approval delivery summary.
+ * Called by the login route after every attempt, success or failure.
+ * Never throws — monitoring must never crash the auth path.
+ */
+export async function writeLoginTelemetry(data: LoginTelemetry): Promise<void> {
+  try {
+    const redis = getRedis();
+    // Sanitise the failure category: strip anything that looks like a numeric
+    // id, token, or URL so credentials cannot accidentally leak here.
+    const safeCategory = (data.lastFailureCategory ?? "")
+      .replace(/\b\d{5,}\b/g, "[id]")          // strip long numeric ids
+      .replace(/[A-Za-z0-9_-]{30,}/g, "[token]") // strip long tokens
+      .slice(0, 200);
+
+    await redis.hset(MONITOR_LOGIN_KEY, {
+      challengeCreatedAt:   data.challengeCreatedAt,
+      recipientsAttempted:  String(data.recipientsAttempted),
+      deliverSucceeded:     String(data.deliverSucceeded),
+      deliverFailed:        String(data.deliverFailed),
+      lastFailureCategory:  safeCategory,
+    });
+    await redis.expire(MONITOR_LOGIN_KEY, LOGIN_TELEMETRY_TTL);
+  } catch (err) {
+    logger.warn({ err }, "Failed to write login telemetry");
+  }
+}
+
+/** Read the last login delivery telemetry. Returns null if never recorded. */
+export async function readLoginTelemetry(): Promise<LoginTelemetry | null> {
+  try {
+    const redis = getRedis();
+    const raw = await redis.hgetall<Record<string, string>>(MONITOR_LOGIN_KEY);
+    if (!raw || !raw.challengeCreatedAt) return null;
+    return {
+      challengeCreatedAt:  raw.challengeCreatedAt,
+      recipientsAttempted: Number(raw.recipientsAttempted ?? 0),
+      deliverSucceeded:    Number(raw.deliverSucceeded    ?? 0),
+      deliverFailed:       Number(raw.deliverFailed       ?? 0),
+      lastFailureCategory: raw.lastFailureCategory        ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Redis due-job counters ─────────────────────────────────────────────────────
+
+export interface RedisDueJobs {
+  expiryDue: number;
+  cycleDue: number;
+  dirtyQueue: number;
+}
+
+/** Count lifecycle jobs due now — safe read from sorted-set indexes. */
+export async function getRedisDueJobCounts(): Promise<RedisDueJobs> {
+  try {
+    const redis = getRedis();
+    const nowMs = Date.now();
+
+    // zrange with byScore counts items with score <= now (i.e. due).
+    const [expiryDueItems, cycleDueItems] = await Promise.all([
+      redis.zrange("dyn:expiry_due", 0, nowMs, { byScore: true }).catch(() => [] as string[]),
+      redis.zrange("dyn:cycle_due",  0, nowMs, { byScore: true }).catch(() => [] as string[]),
+    ]);
+
+    const dirtyQueue = await import("./kv-sync")
+      .then((m) => m.countDirtyTokens())
+      .catch(() => 0);
+
+    return {
+      expiryDue: Array.isArray(expiryDueItems) ? expiryDueItems.length : 0,
+      cycleDue:  Array.isArray(cycleDueItems)  ? cycleDueItems.length  : 0,
+      dirtyQueue,
+    };
+  } catch {
+    return { expiryDue: 0, cycleDue: 0, dirtyQueue: 0 };
+  }
+}

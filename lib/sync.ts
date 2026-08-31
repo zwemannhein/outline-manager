@@ -734,6 +734,7 @@ export interface SystemHealth {
     detail?: string;
     kvBudget: { used: number; limit: number; remaining: number; warn: boolean } | null;
     dirtyQueueSize: number;
+    dueJobs: { expiryDue: number; cycleDue: number };
   };
   telegram: {
     status: MonitorHealthStatus;
@@ -743,6 +744,13 @@ export interface SystemHealth {
     webhookConfigured: boolean;
     linkedApprovers: number;
     pendingLinks: number;
+    loginTelemetry: {
+      challengeCreatedAt: string;
+      recipientsAttempted: number;
+      deliverSucceeded: number;
+      deliverFailed: number;
+      lastFailureCategory: string;
+    } | null;
   };
   cron: {
     status: MonitorHealthStatus;
@@ -782,6 +790,13 @@ export interface OutlineServerHealth {
   disabledCustomers: number;
   missingKeys: number;
   duplicateMappings: number;
+  vpnEndpoint?: {
+    host: string;
+    port: number;
+    portStatus: "open" | "timeout" | "refused" | "unknown";
+    portLatencyMs: number;
+    note: string;
+  };
   checkedAt: string;
 }
 
