@@ -15,8 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
   Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus, Stethoscope,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+} from "lucide-react";import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/utils";
@@ -30,11 +29,13 @@ import {
   resyncCustomer,
   editCustomerSubscription,
   createAdminCustomer,
+  deleteAdminCustomer,
   type DynamicCustomerRow,
   type DynamicHealth,
 } from "@/lib/sync";
 import { MigrateServerDialog, EditSubscriptionDialog, AddCustomerDialog } from "./CustomerDialogs";
 import { DiagnoseDialog } from "./DiagnoseDialog";
+import { DeleteCustomerDialog } from "./DeleteCustomerDialog";
 
 interface CustomersPanelProps {
   servers: Array<{ id: string; name: string }>;
@@ -140,6 +141,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
   const [editSubFor, setEditSubFor] = useState<DynamicCustomerRow | null>(null);
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [diagnoseFor, setDiagnoseFor] = useState<DynamicCustomerRow | null>(null);
+  const [deleteFor, setDeleteFor] = useState<DynamicCustomerRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -522,6 +524,19 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     <span className="hidden sm:inline">Diagnose</span>
                   </Button>
 
+                  {/* Delete — destructive, always visible, placed after non-destructive actions */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    className="min-h-[36px] text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                    onClick={() => setDeleteFor(row)}
+                    aria-label={`Delete ${row.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 sm:mr-1.5" />
+                    <span className="hidden sm:inline">Delete</span>
+                  </Button>
+
                   {row.cleanupPending && (
                     <Button
                       variant="outline"
@@ -656,6 +671,36 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
           token={diagnoseFor.token}
           name={diagnoseFor.name}
           onClose={() => setDiagnoseFor(null)}
+        />
+      )}
+
+      {deleteFor && (
+        <DeleteCustomerDialog
+          name={deleteFor.name}
+          serverName={deleteFor.serverName}
+          outlineKeyId={deleteFor.outlineKeyId}
+          onClose={() => setDeleteFor(null)}
+          onConfirm={async () => {
+            const row = deleteFor;
+            setDeleteFor(null);
+            try {
+              await deleteAdminCustomer(row.token);
+              toast({ title: "Customer deleted", description: row.name });
+              // Remove from list immediately — no full reload needed.
+              setRows((prev) => prev.filter((r) => r.token !== row.token));
+            } catch (err) {
+              const e = err as Error & { code?: string };
+              toast({
+                title: e.code === "MIGRATION_IN_PROGRESS"
+                  ? "Migration in progress"
+                  : e.code === "OUTLINE_DELETE_FAILED"
+                    ? "VPN key deletion failed"
+                    : "Delete failed",
+                description: e.message,
+                variant: "destructive",
+              });
+            }
+          }}
         />
       )}
     </div>

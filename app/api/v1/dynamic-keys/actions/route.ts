@@ -50,6 +50,7 @@ import {
 import { migrateToServer, cleanupMigration } from "@/lib/server-migration";
 import { readDynamicRecord, buildDynamicUrl } from "@/lib/dynamic-keys";
 import { syncDynamicToken as forceSync } from "@/lib/kv-sync";
+import { deleteCustomer } from "@/lib/delete-customer";
 import { createLogger, maskId } from "@/lib/logger";
 
 const logger = createLogger("dynamic-keys-api");
@@ -69,6 +70,7 @@ const actionSchema = z.object({
     "migrateCleanup",
     "revealRaw",
     "resync",
+    "deleteCustomer",
   ]),
 });
 
@@ -86,6 +88,10 @@ const STATUS_BY_CODE: Record<string, number> = {
   SUBSCRIPTION_ENDED: 409,
   NO_METADATA: 400,
   OUTLINE_FAILED: 502,
+  MIGRATION_IN_PROGRESS: 409,
+  OUTLINE_DELETE_FAILED: 502,
+  INVALID_TOKEN: 400,
+  ALREADY_DELETED: 200, // idempotent
 };
 
 function fail(code: string, message: string, detail?: unknown): never {
@@ -285,6 +291,34 @@ export async function POST(req: NextRequest) {
         return successResponse({
           ok: result.ok,
           reason: result.ok ? undefined : result.reason,
+        });
+      }
+
+      // ── Delete customer — permanent, irreversible ──────────────────────────
+      case "deleteCustomer": {
+        const input = tokenOnlySchema.parse(body);
+        const result = await deleteCustomer(input.token);
+        if (!result.ok) {
+          // ALREADY_DELETED is idempotent — return 200 not an error.
+          if (result.code === "ALREADY_DELETED") {
+            logger.info({ user: auth.username, dyn: maskId(input.token) }, "Delete customer: already deleted (idempotent)");
+            return successResponse({ ok: true, alreadyDeleted: true });
+          }
+          fail(result.code, result.message);
+        }
+        logger.info(
+          {
+            user: auth.username,
+            dyn: maskId(input.token),
+            outlineKeyDeleted: result.outlineKeyDeleted,
+            kvProjectionRemoved: result.kvProjectionRemoved,
+          },
+          "Customer deleted by admin"
+        );
+        return successResponse({
+          ok: true,
+          outlineKeyDeleted: result.outlineKeyDeleted,
+          kvProjectionRemoved: result.kvProjectionRemoved,
         });
       }
     }

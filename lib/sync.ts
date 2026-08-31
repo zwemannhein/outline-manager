@@ -856,3 +856,34 @@ export async function diagnoseCustomer(token: string): Promise<DiagnoseResult> {
   if (!res.ok) throw new Error(await readError(res, "Diagnosis failed"));
   return (await res.json()) as DiagnoseResult;
 }
+
+// ── Delete customer ───────────────────────────────────────────────────────────
+
+export async function deleteAdminCustomer(token: string): Promise<{
+  ok: boolean;
+  outlineKeyDeleted: boolean;
+  kvProjectionRemoved: boolean;
+  alreadyDeleted?: boolean;
+}> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch("/api/v1/dynamic-keys/actions", {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deleteCustomer", token }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const err = new Error(
+      (data as { error?: string } | null)?.error || "Delete failed"
+    ) as Error & { code?: string };
+    err.code = (data as { code?: string } | null)?.code;
+    throw err;
+  }
+  return (await res.json()) as {
+    ok: boolean;
+    outlineKeyDeleted: boolean;
+    kvProjectionRemoved: boolean;
+    alreadyDeleted?: boolean;
+  };
+}
