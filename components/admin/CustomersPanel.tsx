@@ -15,14 +15,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
   Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus, Stethoscope,
-  MoreHorizontal, Search,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { formatBytes } from "@/lib/utils";
 import {
@@ -494,13 +491,13 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                   </div>
                 </div>
 
-                {/* Frequent actions stay visible; lower-frequency actions live in the overflow menu. */}
+                {/* All customer actions stay visible and wrap without horizontal scrolling. */}
                 <div className="flex flex-wrap items-center gap-2 border-t pt-3">
                   <Button
                     variant="secondary"
                     size="sm"
                     disabled={busy}
-                    className="min-h-10"
+                    className="min-h-11"
                     onClick={() => setEditSubFor(row)}
                   >
                     <Gauge className="mr-1.5 h-3.5 w-3.5" />
@@ -511,7 +508,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-10"
+                      className="min-h-11"
                       onClick={() =>
                         void run(
                           row, "disable",
@@ -521,7 +518,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         )
                       }
                     >
-                      <Ban className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <Ban className="mr-1.5 h-3.5 w-3.5" />
                       <span>Disable</span>
                     </Button>
                   ) : row.status !== "revoked" ? (
@@ -529,7 +526,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-10"
+                      className="min-h-11"
                       onClick={() =>
                         void run(
                           row, "enable",
@@ -539,7 +536,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         )
                       }
                     >
-                      <Play className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <Play className="mr-1.5 h-3.5 w-3.5" />
                       <span>Enable</span>
                     </Button>
                   ) : null}
@@ -549,7 +546,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      className="min-h-10"
+                      className="min-h-11"
                       onClick={() =>
                         void run(
                           row, "cleanup",
@@ -559,7 +556,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         )
                       }
                     >
-                      <Trash2 className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                       <span>Clean up</span>
                     </Button>
                   )}
@@ -569,7 +566,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       variant="ghost"
                       size="sm"
                       disabled={busy}
-                      className="min-h-10"
+                      className="min-h-11"
                       onClick={() =>
                         void run(
                           row, "resync",
@@ -579,33 +576,51 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         )
                       }
                     >
-                      <RefreshCw className="w-3.5 h-3.5 sm:mr-1.5" />
+                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                       <span>Resync</span>
                     </Button>
                   )}
 
-                  <DropdownMenu modal={false}>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="icon" className="ml-auto h-10 w-10" aria-label={`More actions for ${row.name}`}>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => setDiagnoseFor(row)}>
-                        <Stethoscope className="h-4 w-4" /> Diagnose
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={busy || row.status !== "active"} onSelect={() => setMigrateFor(row)}>
-                        <ArrowRightLeft className="h-4 w-4" /> Migrate
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => void toggleReveal(row)}>
-                        {revealed[row.token] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        {revealed[row.token] ? "Hide raw key" : "Reveal raw key"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem destructive disabled={busy} onSelect={() => setDeleteFor(row)}>
-                        <Trash2 className="h-4 w-4" /> Delete customer
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11"
+                    onClick={() => setDiagnoseFor(row)}
+                  >
+                    <Stethoscope className="mr-1.5 h-3.5 w-3.5" />
+                    Diagnose
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11"
+                    disabled={Boolean(busy) || row.status !== "active"}
+                    onClick={() => setMigrateFor(row)}
+                  >
+                    <ArrowRightLeft className="mr-1.5 h-3.5 w-3.5" />
+                    Migrate
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="min-h-11"
+                    onClick={() => void toggleReveal(row)}
+                  >
+                    {revealed[row.token]
+                      ? <EyeOff className="mr-1.5 h-3.5 w-3.5" />
+                      : <Eye className="mr-1.5 h-3.5 w-3.5" />}
+                    {revealed[row.token] ? "Hide raw key" : "Reveal raw key"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={Boolean(busy)}
+                    onClick={() => setDeleteFor(row)}
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    Delete Customer
+                  </Button>
                 </div>
 
                 {revealed[row.token] && (

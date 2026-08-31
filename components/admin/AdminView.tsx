@@ -22,6 +22,7 @@ import { resolveServerSelection, resolveSelectionAfterRemoval } from "@/lib/serv
 import { useToast } from "@/hooks/use-toast";
 import {
   LogOut, Menu, X, RefreshCw, ShoppingBag, Server, KeyRound, Users, Settings, Activity,
+  PanelLeftClose, PanelLeftOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrdersPanel } from "./OrdersPanel";
@@ -33,6 +34,8 @@ interface AdminViewProps {
 }
 
 type AdminTab = "servers" | "customers" | "orders" | "settings" | "monitoring";
+
+const SERVER_SIDEBAR_PREFERENCE_KEY = "outline_admin_server_sidebar_open";
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: "servers",    label: "Servers",    icon: <Server      className="w-4 h-4" /> },
@@ -50,10 +53,32 @@ export function AdminView({ onLogout }: AdminViewProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [serverSidebarExpanded, setServerSidebarExpanded] = useState(true);
   const [syncing, setSyncing] = useState(true);
   const [activeTab, setActiveTab] = useState<AdminTab>("servers");
 
   const [passwordSetupRequired, setPasswordSetupRequired] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SERVER_SIDEBAR_PREFERENCE_KEY);
+      if (saved !== null) setServerSidebarExpanded(saved === "true");
+    } catch {
+      // Storage can be unavailable in hardened/private browser contexts.
+    }
+  }, []);
+
+  const toggleServerSidebar = useCallback(() => {
+    setServerSidebarExpanded((expanded) => {
+      const next = !expanded;
+      try {
+        localStorage.setItem(SERVER_SIDEBAR_PREFERENCE_KEY, String(next));
+      } catch {
+        // The in-memory preference still works when storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,7 +177,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
     <div className="relative flex h-[100dvh] overflow-hidden bg-slate-50 dark:bg-slate-950">
 
       {/* Mobile sidebar overlay */}
-      {sidebarOpen && (
+      {activeTab === "servers" && sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm md:hidden"
           onClick={() => setSidebarOpen(false)}
@@ -162,10 +187,12 @@ export function AdminView({ onLogout }: AdminViewProps) {
       {/* Server sidebar — only shown on Servers tab */}
       {activeTab === "servers" && (
         <div
+          id="server-sidebar"
           className={`
             fixed inset-y-0 left-0 z-30 md:static md:z-auto
-            transform transition-transform duration-200
+            transform overflow-hidden transition-[transform,width] duration-200 md:translate-x-0
             ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+            ${serverSidebarExpanded ? "md:w-64" : "md:w-0"}
           `}
         >
           <ServerSidebar
@@ -188,15 +215,31 @@ export function AdminView({ onLogout }: AdminViewProps) {
           <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
             {/* Hamburger — only on Servers tab where sidebar exists */}
             {activeTab === "servers" && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="md:hidden hover:bg-white/50 dark:hover:bg-gray-800/50 shrink-0 min-w-[44px] min-h-[44px]"
-                onClick={() => setSidebarOpen((v) => !v)}
-                aria-label="Toggle server list"
-              >
-                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden hover:bg-white/50 dark:hover:bg-gray-800/50 shrink-0 min-w-[44px] min-h-[44px]"
+                  onClick={() => setSidebarOpen((v) => !v)}
+                  aria-label={sidebarOpen ? "Close server list" : "Open server list"}
+                  aria-expanded={sidebarOpen}
+                  aria-controls="server-sidebar"
+                >
+                  {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="hidden md:inline-flex hover:bg-white/50 dark:hover:bg-gray-800/50 shrink-0 min-w-[44px] min-h-[44px]"
+                  onClick={toggleServerSidebar}
+                  aria-label={serverSidebarExpanded ? "Collapse server sidebar" : "Expand server sidebar"}
+                  aria-expanded={serverSidebarExpanded}
+                  aria-controls="server-sidebar"
+                  title={serverSidebarExpanded ? "Collapse server sidebar" : "Expand server sidebar"}
+                >
+                  {serverSidebarExpanded ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
+                </Button>
+              </>
             )}
 
             {/* Tab bar — scrollable on very small screens */}
