@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
     checks.push(pass("Status", record.status));
 
     // ── 3. Permanent token ───────────────────────────────────────────────────
-    const dynamicUrl = buildDynamicUrl(record.token);
+    const dynamicUrl = buildDynamicUrl(record.token, record.name);
     if (dynamicUrl.startsWith("ssconf://")) {
       checks.push(pass("Permanent token", "ssconf:// URL buildable"));
     } else {

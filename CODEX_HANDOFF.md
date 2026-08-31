@@ -16,7 +16,7 @@ A single admin uses it to:
 - Monitor system health across all integrated services
 - Approve their own login via Telegram two-factor (any linked approver can approve)
 
-Customers receive one URL that never changes. The underlying Shadowsocks credentials can be rotated or migrated without the customer updating anything.
+Customers receive a stable token/path; the optional display-name fragment tracks the current customer name. The underlying Shadowsocks credentials can be rotated or migrated without changing the token.
 
 ---
 
@@ -39,7 +39,7 @@ Customers receive one URL that never changes. The underlying Shadowsocks credent
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (24 files, 448 tests) |
+| Vitest | ^2.1.8 | Test runner (25 files, 452 tests) |
 
 ---
 
@@ -138,7 +138,7 @@ outline-manager/
 │   │   └── cron.ts     ← Cloudflare scheduled Worker: calls /api/v1/cron/tick hourly
 │   └── wrangler.toml   ← Worker config; workers_dev = true
 │
-├── __tests__/           ← 24 standard test files, 448 tests (Vitest + jsdom)
+├── __tests__/           ← 25 standard test files, 452 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -242,7 +242,7 @@ Admin approves (dashboard or Telegram button)
   → Outline key created on selected server
   → DynamicKeyRecord created in Redis (status=active, rev=1)
   → Cloudflare KV projection written (accessUrl, status, rev)
-  → Permanent ssconf:// URL built from the unchanged token (no name fragment)
+  → Permanent ssconf:// URL built from the unchanged token plus encoded display-name fragment
   → Order marked approved, dynamicToken stored on order
   → claimToken stored → customer can poll /api/v1/orders/status with it
 ```
@@ -345,12 +345,13 @@ Via `/start <token>` message in private chat. See section F.
 ### Canonical URL Format
 
 ```
-ssconf://outline-manager.vercel.app/k/<32-hex-token>
+ssconf://outline-manager.vercel.app/k/<32-hex-token>#<URL-encoded-customer-name>
 ```
 
 - `ssconf://` scheme tells Outline clients to fetch the JSON config via HTTPS.
-- Legacy URLs containing a fragment remain parseable for token recovery.
-- **No `#name` fragment is appended** to newly generated permanent keys.
+- The encoded fragment is display metadata and is not transmitted to `/k/<token>`.
+- Empty or missing names produce the same URL without a trailing `#`.
+- Customer identity is always the token; changing a name affects only the fragment.
 
 ### What GET /k/<token> Returns
 
@@ -377,7 +378,7 @@ Moving to Vercel `/k/[token]` returning JSON fixed real-device connectivity. The
 
 ### Token Permanence
 
-The 32-hex token (128 bits, cryptographically random) is generated once at identity creation and never changes. All of the following happen without changing the token:
+The 32-hex token (128 bits, cryptographically random) is generated once at identity creation and never changes. The `/k/<token>` path is stable; only the display-name fragment may change when a name changes. All of the following happen without changing the token:
 
 - Quota changes
 - Expiry changes
@@ -656,7 +657,7 @@ Verified by the 2026-08-31 source reconciliation pass.
 
 ```
 npm run type-check  → PASS (0 errors)
-npm run test        → PASS (24 files, 448 tests)
+npm run test        → PASS (25 files, 452 tests)
 npm run build       → PASS
 ```
 
@@ -717,7 +718,7 @@ Do not repeat these mistakes.
 
 2. **Plain-text `ss://` in `/k/` response broke clients.** Outline clients expect JSON format. Plain-text ss:// is legacy. The current route correctly returns JSON.
 
-3. **`#customer-name` fragment on ssconf URL broke connections.** Outline clients parse the fragment; adding a `#Name` to the URL caused some clients to fail. New permanent keys do not include the fragment. Legacy fragmented URLs remain parseable only for token recovery.
+3. **Display names belong only in the outer fragment.** The current product format intentionally appends the URL-encoded customer name after `#`. Never place it in `/k/<token>`, use it as identity, or alter the Vercel resolver response.
 
 4. **Telegram order success ≠ login approval success.** Order notifications and login approval use different paths. When login approval stopped working, order notifications continued working. Always check login delivery telemetry (`monitor:login:last`) separately.
 
@@ -804,7 +805,7 @@ Before shipping any change, verify none of these are broken:
 - [ ] **One dashboard admin account** — no additional accounts created
 - [ ] **Multiple Telegram approvers** — any number can be linked/unlinked
 - [ ] **TELEGRAM_CHAT_ID always included** — not skipped when Redis approvers exist
-- [ ] **Permanent Vercel ssconf URL** — `/k/<token>` returns JSON 200 for active customers
+- [ ] **Permanent Vercel ssconf URL** — stable `/k/<token>` path with optional encoded name fragment; resolver returns JSON 200 for active customers
 - [ ] **Raw ss:// hidden** — never in API responses except audited `revealRaw` action
 - [ ] **Quota period logic** — 30-day cycle, configured quota displayed (not remaining)
 - [ ] **Expiry auto-disable** — past expiry disables immediately via Edit Sub or cron
@@ -815,5 +816,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (24 files, ≥448 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (25 files, ≥452 tests)
 - [ ] **Build passes** — `npm run build` exits 0

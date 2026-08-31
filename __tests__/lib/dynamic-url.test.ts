@@ -42,14 +42,31 @@ describe("permanent URL format", () => {
 
   it("matches the canonical shape", () => {
     expect(buildDynamicUrl(TOKEN, "Ko Aung")).toBe(
-      `ssconf://outline-manager.vercel.app/k/${TOKEN}`
+      `ssconf://outline-manager.vercel.app/k/${TOKEN}#Ko%20Aung`
     );
   });
 
-  it("never emits a customer-name fragment", () => {
+  it("adds an ASCII customer-name fragment", () => {
+    expect(buildDynamicUrl(TOKEN, "Alice")).toBe(
+      `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#Alice`
+    );
+  });
+
+  it("URL-encodes spaces in the customer-name fragment", () => {
+    expect(buildDynamicUrl(TOKEN, "Ko Aung")).toBe(
+      `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#Ko%20Aung`
+    );
+  });
+
+  it("URL-encodes a Burmese customer-name fragment", () => {
+    const name = "ကိုအောင်";
+    expect(buildDynamicUrl(TOKEN, name)).toBe(
+      `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#${encodeDisplayName(name)}`
+    );
+  });
+
+  it("omits the fragment for an empty or missing name", () => {
     expect(buildDynamicUrl(TOKEN)).toBe(`ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}`);
-    expect(buildDynamicUrl(TOKEN, "Ko Aung")).not.toContain("#");
-    expect(buildDynamicUrl(TOKEN, "ကိုအောင်")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, "")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, "   ")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, null)).not.toContain("#");
@@ -83,15 +100,11 @@ describe("customer display name encoding", () => {
     expect(decodeURIComponent(encoded)).toBe("VIP 🎉");
   });
 
-  it("escapes characters encodeURIComponent leaves literal", () => {
-    // These can be treated as delimiters by some clients.
-    const encoded = encodeDisplayName("a!b'c(d)e*f");
-    expect(encoded).not.toContain("!");
-    expect(encoded).not.toContain("'");
-    expect(encoded).not.toContain("(");
-    expect(encoded).not.toContain(")");
-    expect(encoded).not.toContain("*");
-    expect(decodeURIComponent(encoded)).toBe("a!b'c(d)e*f");
+  it("uses encodeURIComponent semantics for symbols", () => {
+    const name = "VIP & #1/2?";
+    const encoded = encodeDisplayName(name);
+    expect(encoded).toBe(encodeURIComponent(name));
+    expect(decodeURIComponent(encoded)).toBe(name);
   });
 
   it("never emits a raw # or newline that could break the URL", () => {
@@ -111,9 +124,9 @@ describe("parsing customer input", () => {
     expect(parsed).toEqual({ token: TOKEN, name: "Ko Aung" });
   });
 
-  it("continues to parse names from legacy fragmented URLs", () => {
+  it("round-trips Burmese names from generated fragmented URLs", () => {
     const burmese = "ကိုအောင်";
-    const url = `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#${encodeDisplayName(burmese)}`;
+    const url = buildDynamicUrl(TOKEN, burmese);
     expect(parseDynamicUrl(url)).toEqual({ token: TOKEN, name: burmese });
   });
 
@@ -150,22 +163,23 @@ describe("parsing customer input", () => {
     expect(parsed?.token).toBe(TOKEN);
   });
 
-  it("preserves the token while deliberately dropping new display-name fragments", () => {
+  it("round-trips generated display-name fragments without changing the token", () => {
     for (const name of ["Ko Aung", "ကိုအောင်", "VIP 🎉", "a!b'c(d)", "Plain"]) {
       const parsed = parseDynamicUrl(buildDynamicUrl(TOKEN, name));
-      expect(parsed).toEqual({ token: TOKEN, name: null });
+      expect(parsed).toEqual({ token: TOKEN, name });
     }
   });
 });
 
 describe("URL stability across backend changes", () => {
-  it("depends only on the unchanged token, not on name, server, or quota", () => {
-    // The permanent URL is derived, never stored, so nothing about the
-    // underlying key can influence it.
+  it("keeps the token/path unchanged when only the display name changes", () => {
     const a = buildDynamicUrl(TOKEN, "Ko Aung");
     const b = buildDynamicUrl(TOKEN, "Different Name");
-    expect(a).toBe(b);
+    expect(a.split("#")[0]).toBe(b.split("#")[0]);
+    expect(a.split("#")[0]).toBe(`ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}`);
+    expect(a).not.toBe(b);
     expect(parseDynamicUrl(a)?.token).toBe(TOKEN);
+    expect(parseDynamicUrl(b)?.token).toBe(TOKEN);
   });
 });
 

@@ -4,7 +4,9 @@
  * Returns the customer's current Shadowsocks configuration in the official
  * Outline JSON format. The permanent URL the customer holds is:
  *
- *     ssconf://outline-manager.vercel.app/k/<32-hex-token>
+ *     ssconf://outline-manager.vercel.app/k/<32-hex-token>#<encoded-name>
+ *
+ * The fragment is handled by the client and never reaches this resolver.
  *
  * Security posture:
  * - No authentication required (Outline clients cannot present credentials).

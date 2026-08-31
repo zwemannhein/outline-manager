@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
           recreatedKey: result.recreatedKey,
           outlineKeyId: result.outlineKeyId,
           // Proof for the operator that the URL did not change.
-          dynamicUrl: record ? buildDynamicUrl(record.token) : null,
+          dynamicUrl: record ? buildDynamicUrl(record.token, record.name) : null,
           syncPending: result.syncPending,
         });
       }

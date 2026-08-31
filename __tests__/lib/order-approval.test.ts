@@ -188,14 +188,13 @@ describe("a fresh approval creates exactly one key and one identity", () => {
     expect(JSON.stringify(result)).not.toContain("ss://created");
   });
 
-  it("returns the canonical Vercel URL without a customer-name fragment", async () => {
+  it("returns the canonical Vercel URL with an encoded customer-name fragment", async () => {
     await seed([makeOrder({ name: "Ko Aung" })]);
     const result = await approveOrder({ orderId: "ord_1_abc", source: "web" });
     if (!result.ok) throw new Error("expected success");
     expect(result.dynamicUrl).toMatch(
-      /^ssconf:\/\/outline-manager\.vercel\.app\/k\/[0-9a-f]{32}$/
+      /^ssconf:\/\/outline-manager\.vercel\.app\/k\/[0-9a-f]{32}#Ko%20Aung$/
     );
-    expect(result.dynamicUrl).not.toContain("#");
   });
 
   it("names the Outline key after the customer and applies the plan quota", async () => {

@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
             updatedAt: record.updatedAt,
 
             // The customer's permanent key — the primary thing to copy.
-            dynamicUrl: buildDynamicUrl(record.token),
+            dynamicUrl: buildDynamicUrl(record.token, record.name),
 
             // configuredQuotaBytes is always the admin-set allowance, never
             // the decreasing "remaining" value.  Used by the UI to show the

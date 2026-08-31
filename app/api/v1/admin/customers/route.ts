@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
     // Push the public projection to Cloudflare KV (best-effort; dirty if it fails).
     const sync = await putDynamicProjection(record);
 
-    const dynamicUrl = buildDynamicUrl(token);
+    const dynamicUrl = buildDynamicUrl(token, data.name);
 
     logger.info(
       {

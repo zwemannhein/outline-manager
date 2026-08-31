@@ -27,7 +27,9 @@ vi.mock("@/lib/dynamic-keys", () => ({
     suspendedState: null,
     history: [],
   }]),
-  buildDynamicUrl: vi.fn((token: string) => `ssconf://outline-manager.vercel.app/k/${token}`),
+  buildDynamicUrl: vi.fn((token: string, name?: string) =>
+    `ssconf://outline-manager.vercel.app/k/${token}${name ? `#${encodeURIComponent(name)}` : ""}`
+  ),
   pendingCleanupEntries: vi.fn(() => []),
 }));
 
@@ -61,6 +63,9 @@ describe("dynamic customer API raw-key protection", () => {
 
     expect(response.status).toBe(200);
     expect(payload.customers[0]).not.toHaveProperty("accessUrl");
+    expect(payload.customers[0].dynamicUrl).toBe(
+      `ssconf://outline-manager.vercel.app/k/${"a".repeat(32)}#Customer`
+    );
     expect(JSON.stringify(payload)).not.toContain(RAW_URL);
     expect(JSON.stringify(payload)).not.toContain("ss://raw-credential");
   });

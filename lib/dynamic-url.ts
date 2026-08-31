@@ -40,20 +40,16 @@ export function getDynamicBaseHost(): string {
 }
 
 /**
- * Percent-encode a customer name from a legacy URI fragment.
+ * Percent-encode a customer display name for the URI fragment.
  *
- * encodeURIComponent handles spaces, Burmese script and emoji. `!'()*` are
- * additionally escaped because encodeURIComponent leaves them literal and some
- * clients treat them as delimiters.
+ * Uses the platform's encodeURIComponent semantics for spaces, Unicode, and
+ * fragment delimiters.
  */
 export function encodeDisplayName(name?: string | null): string {
   if (!name) return "";
   const trimmed = name.trim();
   if (!trimmed) return "";
-  return encodeURIComponent(trimmed).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-  );
+  return encodeURIComponent(trimmed);
 }
 
 /**
@@ -63,18 +59,19 @@ export function encodeDisplayName(name?: string | null): string {
  * the query when fetching a remote config, and a path survives copy-paste and
  * chat-app link detection better.
  *
- * Customer names are deliberately not appended. Real-device testing found that
- * fragments can break Outline imports even though browsers do not transmit them
- * to the resolver. The optional argument remains for source compatibility with
- * older call sites, but it cannot affect the generated URL.
+ * The fragment is display metadata only. It is never sent to `/k/<token>` and
+ * therefore cannot participate in identity or credential resolution. Changing a
+ * name may change the fragment, but never the permanent token/path.
  */
-export function buildDynamicUrl(token: string, _name?: string | null): string {
+export function buildDynamicUrl(token: string, name?: string | null): string {
   if (!isValidDynamicToken(token)) {
     throw new Error("buildDynamicUrl: invalid dynamic token");
   }
 
   const base = getDynamicBaseUrl().replace(/^https?:\/\//i, "");
-  return `ssconf://${base}/k/${token}`;
+  const url = `ssconf://${base}/k/${token}`;
+  const encodedName = encodeDisplayName(name);
+  return encodedName ? `${url}#${encodedName}` : url;
 }
 
 /** The https:// form of the same endpoint, for diagnostics. */

@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       plan: order.plan,
       createdAt: order.createdAt,
       // The permanent customer key. Never the raw ss:// URL.
-      dynamicUrl: buildDynamicUrl(record.token),
+      dynamicUrl: buildDynamicUrl(record.token, record.name),
       keyStatus: record.status,
       planDescription: meta ? describeQuota(meta) : null,
       expiryDate: meta?.expiryDate ?? null,

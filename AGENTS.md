@@ -40,10 +40,11 @@ The admin dashboard allows a single administrator to:
 
 - Every customer receives a **permanent** ssconf URL:
   ```
-  ssconf://outline-manager.vercel.app/k/<32-hex-token>
+  ssconf://outline-manager.vercel.app/k/<32-hex-token>#<URL-encoded-customer-name>
   ```
 - The token **must never change** across: quota edits, expiry changes, disable/enable, renewal, migration, or Outline key replacement.
-- Do **not** append `#customer-name` fragments to newly generated permanent keys.
+- Append the URL-encoded customer display name as a fragment when a name exists; omit `#` when it does not.
+- The fragment is display metadata only. Customer identity remains the token, and changing a name must never change `/k/<token>`.
 - `GET /k/<token>` returns Outline-compatible JSON — `method`, `password`, `server`, `server_port`.
 - Do **not** return plain-text `ss://` from `/k/`. That format is legacy.
 - Raw `ss://` is admin troubleshooting only (audited, never shown by default).
