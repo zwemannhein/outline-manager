@@ -58,7 +58,7 @@ export async function DELETE(req: NextRequest) {
 
     await removeApprover(input.data.userId);
 
-    logger.info({ user: auth.username, targetUserId: input.data.userId }, "Telegram approver removed");
+    logger.info({ user: auth.username }, "Telegram approver removed");
 
     return successResponse({ ok: true });
   } catch (error) {

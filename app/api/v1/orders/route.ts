@@ -139,6 +139,8 @@ export async function POST(req: NextRequest) {
 
     if (botToken && chatIds) {
       const adminIds = chatIds.split(",").map((id) => id.trim());
+      let delivered = 0;
+      let failed = 0;
       for (const chatId of adminIds) {
         try {
           const result = await sendOrderNotification(
@@ -153,14 +155,18 @@ export async function POST(req: NextRequest) {
             }
           );
           if (result.ok) {
-            logger.info({ orderId: order.id, chatId }, "Telegram notification sent");
+            delivered++;
           } else {
-            logger.warn({ orderId: order.id, chatId, error: result.error }, "Failed to send Telegram notification");
+            failed++;
           }
-        } catch (error) {
-          logger.error({ orderId: order.id, chatId, error }, "Telegram notification error");
+        } catch {
+          failed++;
         }
       }
+      logger.info(
+        { orderId: order.id, recipientsAttempted: adminIds.length, delivered, failed },
+        "Telegram order notification fan-out completed"
+      );
     }
 
     // claimToken is returned ONCE. The client must keep it to check status.

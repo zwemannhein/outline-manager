@@ -42,12 +42,14 @@ describe("permanent URL format", () => {
 
   it("matches the canonical shape", () => {
     expect(buildDynamicUrl(TOKEN, "Ko Aung")).toBe(
-      `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#Ko%20Aung`
+      `ssconf://outline-manager.vercel.app/k/${TOKEN}`
     );
   });
 
-  it("omits the fragment when there is no name", () => {
+  it("never emits a customer-name fragment", () => {
     expect(buildDynamicUrl(TOKEN)).toBe(`ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}`);
+    expect(buildDynamicUrl(TOKEN, "Ko Aung")).not.toContain("#");
+    expect(buildDynamicUrl(TOKEN, "ကိုအောင်")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, "")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, "   ")).not.toContain("#");
     expect(buildDynamicUrl(TOKEN, null)).not.toContain("#");
@@ -109,9 +111,9 @@ describe("parsing customer input", () => {
     expect(parsed).toEqual({ token: TOKEN, name: "Ko Aung" });
   });
 
-  it("parses Burmese names back to the original string", () => {
+  it("continues to parse names from legacy fragmented URLs", () => {
     const burmese = "ကိုအောင်";
-    const url = buildDynamicUrl(TOKEN, burmese);
+    const url = `ssconf://${DEFAULT_DYNAMIC_HOST}/k/${TOKEN}#${encodeDisplayName(burmese)}`;
     expect(parseDynamicUrl(url)).toEqual({ token: TOKEN, name: burmese });
   });
 
@@ -148,35 +150,40 @@ describe("parsing customer input", () => {
     expect(parsed?.token).toBe(TOKEN);
   });
 
-  it("round-trips build then parse for a range of names", () => {
+  it("preserves the token while deliberately dropping new display-name fragments", () => {
     for (const name of ["Ko Aung", "ကိုအောင်", "VIP 🎉", "a!b'c(d)", "Plain"]) {
       const parsed = parseDynamicUrl(buildDynamicUrl(TOKEN, name));
-      expect(parsed).toEqual({ token: TOKEN, name });
+      expect(parsed).toEqual({ token: TOKEN, name: null });
     }
   });
 });
 
 describe("URL stability across backend changes", () => {
-  it("depends only on the token and name, not on server or quota", () => {
+  it("depends only on the unchanged token, not on name, server, or quota", () => {
     // The permanent URL is derived, never stored, so nothing about the
     // underlying key can influence it.
     const a = buildDynamicUrl(TOKEN, "Ko Aung");
-    const b = buildDynamicUrl(TOKEN, "Ko Aung");
+    const b = buildDynamicUrl(TOKEN, "Different Name");
     expect(a).toBe(b);
+    expect(parseDynamicUrl(a)?.token).toBe(TOKEN);
   });
 });
 
 describe("base URL configuration", () => {
-  const original = process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL;
+  const originalPublic = process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL;
+  const originalServer = process.env.DYNAMIC_KEY_BASE_URL;
 
   afterEach(() => {
-    if (original === undefined) delete process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL;
-    else process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL = original;
+    if (originalPublic === undefined) delete process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL;
+    else process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL = originalPublic;
+    if (originalServer === undefined) delete process.env.DYNAMIC_KEY_BASE_URL;
+    else process.env.DYNAMIC_KEY_BASE_URL = originalServer;
   });
 
   it("falls back to the default host", () => {
     delete process.env.NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL;
     delete process.env.DYNAMIC_KEY_BASE_URL;
+    expect(DEFAULT_DYNAMIC_HOST).toBe("outline-manager.vercel.app");
     expect(getDynamicBaseHost()).toBe(DEFAULT_DYNAMIC_HOST);
   });
 

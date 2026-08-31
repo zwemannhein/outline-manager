@@ -386,8 +386,6 @@ export interface DynamicCustomerRow {
   updatedAt: string;
   /** The customer's permanent key. This is what "Copy Key" copies. */
   dynamicUrl: string;
-  /** Only present when explicitly requested via revealRaw. */
-  accessUrl?: string;
   /** Admin-configured allowance per 30-day cycle. Never decremented by usage. */
   configuredQuotaBytes: number | null;
   quotaBytes: number | null;

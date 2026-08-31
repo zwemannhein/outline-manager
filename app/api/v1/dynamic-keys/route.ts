@@ -4,9 +4,9 @@
  * One call returns everything the admin table needs: identity, quota/cycle state,
  * live usage, expiry, and edge sync status.
  *
- * The raw ss:// access URL is deliberately EXCLUDED unless `?includeRaw=true` is
- * passed, so the value does not sit in every table render, browser cache and
- * devtools network log. Revealing it is an explicit, audited act.
+ * The raw ss:// access URL is deliberately excluded so the value does not sit in
+ * every table render, browser cache, or devtools network log. Revealing it is an
+ * explicit, audited action through `revealRaw` only.
  */
 
 export const runtime = "nodejs";
@@ -36,8 +36,6 @@ export async function GET(req: NextRequest) {
     if (!auth.authenticated) {
       return unauthorizedResponse();
     }
-
-    const includeRaw = req.nextUrl.searchParams.get("includeRaw") === "true";
 
     const [records, allMeta, servers] = await Promise.all([
       listDynamicRecords(),
@@ -81,9 +79,7 @@ export async function GET(req: NextRequest) {
             updatedAt: record.updatedAt,
 
             // The customer's permanent key — the primary thing to copy.
-            dynamicUrl: buildDynamicUrl(record.token, record.name),
-            // Only on explicit request.
-            accessUrl: includeRaw ? record.accessUrl : undefined,
+            dynamicUrl: buildDynamicUrl(record.token),
 
             // configuredQuotaBytes is always the admin-set allowance, never
             // the decreasing "remaining" value.  Used by the UI to show the

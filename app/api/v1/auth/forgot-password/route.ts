@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
             }
           );
           if (result.ok) delivered = true;
-          else logger.warn({ chatId, error: result.error }, "Failed to deliver reset code");
+          else logger.warn("Failed to deliver reset code to a configured recipient");
         }
         return delivered;
       },

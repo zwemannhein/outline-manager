@@ -8,7 +8,7 @@
 #   npx wrangler deploy --config wrangler.cron.toml
 #   npx wrangler secret put CRON_SECRET --config wrangler.cron.toml
 #
-# Set ROLLOVER_URL below to your deployed Vercel domain before deploying.
+# ROLLOVER_URL targets the canonical production Vercel cron endpoint.
 
 name = "outline-cron"
 main = "src/cron.ts"
@@ -21,7 +21,7 @@ workers_dev = false
 crons = ["0 * * * *"]
 
 [vars]
-ROLLOVER_URL = "https://REPLACE_WITH_YOUR_VERCEL_DOMAIN/api/v1/cron/tick"
+ROLLOVER_URL = "https://outline-manager.vercel.app/api/v1/cron/tick"
 
 # No KV binding and no Outline access: this Worker only triggers Vercel.
 # CRON_SECRET is set via `wrangler secret put`, never in this file.

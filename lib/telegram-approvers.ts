@@ -22,7 +22,7 @@
 
 import { randomBytes } from "crypto";
 import { getRedis } from "./api-utils";
-import { createLogger, maskId } from "./logger";
+import { createLogger } from "./logger";
 
 const logger = createLogger("telegram-approvers");
 
@@ -84,10 +84,7 @@ export async function createLinkToken(expectedUsername: string): Promise<Pending
   await redis.sadd(PENDING_LINKS_SET, token).catch(() => {});
   await redis.expire(PENDING_LINKS_SET, LINK_TTL_SECONDS * 2).catch(() => {});
 
-  logger.info(
-    { token: maskId(token), expectedUsername: normalized || "(any)" },
-    "Telegram link token created"
-  );
+  logger.info({ usernameRestricted: Boolean(normalized) }, "Telegram link token created");
 
   return {
     token,
@@ -127,7 +124,7 @@ export async function consumeLinkToken(token: string): Promise<ConsumedLink | nu
 
   await redis.srem(PENDING_LINKS_SET, token).catch(() => {});
 
-  logger.info({ token: maskId(token) }, "Telegram link token consumed");
+  logger.info("Telegram link token consumed");
   return { expectedUsername: raw.expectedUsername ?? "" };
 }
 
@@ -170,7 +167,7 @@ export async function linkApprover(params: {
 
   await redis.sadd(APPROVERS_SET, params.userId);
 
-  logger.info({ userId: params.userId, username: params.username }, "Telegram approver linked");
+  logger.info("Telegram approver linked");
   return approver;
 }
 
@@ -179,7 +176,7 @@ export async function removeApprover(userId: string): Promise<void> {
   const redis = getRedis();
   await redis.del(approverKey(userId));
   await redis.srem(APPROVERS_SET, userId);
-  logger.info({ userId }, "Telegram approver removed");
+  logger.info("Telegram approver removed");
 }
 
 /** List all linked approvers. */
@@ -243,4 +240,44 @@ export async function getApproverChatIds(): Promise<string[]> {
 export async function isLinkedApprover(chatId: string): Promise<boolean> {
   const approvers = await listApprovers();
   return approvers.some((a) => a.chatId === chatId);
+}
+
+export type TelegramCallbackAuthorization =
+  | { authorized: true; source: "linked" | "legacy_static" }
+  | { authorized: false; reason: "identity_mismatch" };
+
+/**
+ * Authorize a callback using Telegram's verified numeric identifiers.
+ *
+ * Linked approvers must match both the stored user_id and stored chat binding.
+ * The legacy TELEGRAM_CHAT_ID fallback has no separate stored user record, so it
+ * is accepted only for a private-chat-shaped binding where user_id === chat_id.
+ * Usernames never participate in authorization.
+ */
+export function authorizeTelegramCallback(params: {
+  approvers: TelegramApprover[];
+  staticChatIds: string[];
+  telegramUserId: string;
+  chatId: string;
+}): TelegramCallbackAuthorization {
+  const linked = params.approvers.some(
+    (approver) =>
+      approver.userId === params.telegramUserId && approver.chatId === params.chatId
+  );
+  if (linked) return { authorized: true, source: "linked" };
+
+  const legacyStatic =
+    params.telegramUserId === params.chatId && params.staticChatIds.includes(params.chatId);
+  if (legacyStatic) return { authorized: true, source: "legacy_static" };
+
+  return { authorized: false, reason: "identity_mismatch" };
+}
+
+/** New approver links are bound only from a Telegram private chat. */
+export function isPrivateTelegramBinding(
+  chatType: string,
+  telegramUserId: string,
+  chatId: string
+): boolean {
+  return chatType === "private" && telegramUserId === chatId;
 }

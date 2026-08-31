@@ -1,7 +1,7 @@
 # CODEX_HANDOFF.md — Complete Project Map
 
 > **START HERE.** Read AGENTS.md and this file in full before touching any code.
-> Source code is the authority. This document was generated from actual code inspection at commit f754dda.
+> Source code is the authority. This document was reconciled with the stabilization source on 2026-08-31.
 
 ---
 
@@ -39,7 +39,7 @@ Customers receive one URL that never changes. The underlying Shadowsocks credent
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (22 files, 439 tests) |
+| Vitest | ^2.1.8 | Test runner (24 files, 448 tests) |
 
 ---
 
@@ -138,7 +138,7 @@ outline-manager/
 │   │   └── cron.ts     ← Cloudflare scheduled Worker: calls /api/v1/cron/tick hourly
 │   └── wrangler.toml   ← Worker config; workers_dev = true
 │
-├── __tests__/           ← 22 test files, 439 tests (Vitest + jsdom)
+├── __tests__/           ← 24 standard test files, 448 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -242,7 +242,7 @@ Admin approves (dashboard or Telegram button)
   → Outline key created on selected server
   → DynamicKeyRecord created in Redis (status=active, rev=1)
   → Cloudflare KV projection written (accessUrl, status, rev)
-  → Permanent ssconf:// URL built from token + name
+  → Permanent ssconf:// URL built from the unchanged token (no name fragment)
   → Order marked approved, dynamicToken stored on order
   → claimToken stored → customer can poll /api/v1/orders/status with it
 ```
@@ -275,6 +275,7 @@ Two modes via `POST /api/v1/admin/customers`:
 
 3. Any linked Telegram approver taps Approve or Reject
    → POST /api/v1/telegram/webhook (callback_query)
+   → Verify callback `from.id` and chat against the stored linked binding
    → First valid decision wins via Redis Lua CAS
    → editTelegramMessageText reflects decision in chat
 
@@ -296,10 +297,10 @@ Admin: Settings → Add Approver → enter username (optional) → Generate Link
   → Returns deep link: https://t.me/<TELEGRAM_BOT_USERNAME>?start=<token>
 
 User clicks link in Telegram:
-  → Bot receives /start <token>
+  → Bot receives /start <token> in a private chat
   → POST /api/v1/telegram/webhook (message update)
   → consumeLinkToken: atomically deletes key (prevents replay)
-  → Checks expectedUsername vs actual Telegram username
+  → Checks private user/chat binding and expected username (when specified)
   → Stores tg:approver:<userId> with chatId, username, linkedAt
   → Bot replies: "Telegram approval access linked successfully."
 ```
@@ -348,7 +349,7 @@ ssconf://outline-manager.vercel.app/k/<32-hex-token>
 ```
 
 - `ssconf://` scheme tells Outline clients to fetch the JSON config via HTTPS.
-- The fragment (`#Name`) never reaches the server — it is presentation metadata only.
+- Legacy URLs containing a fragment remain parseable for token recovery.
 - **No `#name` fragment is appended** to newly generated permanent keys.
 
 ### What GET /k/<token> Returns
@@ -410,6 +411,7 @@ Single dialog edits both quota GB and expiry date together. Submits `editSubscri
 ### Renew Button
 
 Removed from UI. Do not re-add without explicit instruction.
+Dormant backend/client renewal helpers remain for compatibility, but the active admin flow is Edit Subscription.
 
 ### Mid-Period Quota Change
 
@@ -497,7 +499,7 @@ Never mutates anything.
 
 ### AWS Resource Metrics
 
-Not configured. Requires `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`. Displays "Not configured" without failing.
+Not implemented. The UI always displays "Not configured" without failing. Adding AWS credentials alone does not enable collection.
 
 ### Login Telemetry (monitor:login:last)
 
@@ -554,16 +556,16 @@ Each pass is bounded (50/50/25 items) to stay within Vercel function timeout and
 | Variable | Status | Notes |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Required | Bot token from @BotFather |
-| `TELEGRAM_BOT_USERNAME` | Required | Bot username without @; for deep-link generation |
-| `TELEGRAM_CHAT_ID` | Required | Comma-separated chatIds; ALWAYS included as notification target alongside dynamic approvers |
+| `TELEGRAM_BOT_USERNAME` | Required for approver linking | Bot username without @; used only for deep-link generation |
+| `TELEGRAM_CHAT_ID` | Optional for login when linked approvers exist; operationally recommended | Comma-separated private chatIds; always merged into login targets and currently used directly by password reset and order notifications |
 | `TELEGRAM_WEBHOOK_SECRET` | Strongly recommended | Webhook HMAC verification secret (min 16 chars) |
 
 ### Dynamic Config / VPN Core
 
 | Variable | Status | Notes |
 |---|---|---|
-| `DYNAMIC_KEY_BASE_URL` | Required | Base URL for permanent keys; must be `https://outline-manager.vercel.app` |
-| `NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL` | Required | Same value; exposed to browser for URL building |
+| `DYNAMIC_KEY_BASE_URL` | Optional override | Defaults to `https://outline-manager.vercel.app`; any production override must remain canonical |
+| `NEXT_PUBLIC_DYNAMIC_KEY_BASE_URL` | Optional override | Same public canonical base for browser-side URL building |
 
 ### Cloudflare KV (projection cache)
 
@@ -596,12 +598,12 @@ If absent, all KV writes are queued to `dyn:kv_dirty` and the cron will retry. T
 | `VERCEL_GIT_COMMIT_SHA` | Auto | Shown in monitoring app section |
 | `VERCEL_REGION` | Auto | Shown in monitoring app section |
 
-### AWS (optional — for future resource metrics)
+### AWS (reserved — resource collection not implemented)
 
 | Variable | Status | Notes |
 |---|---|---|
-| `AWS_ACCESS_KEY_ID` | Optional | Not currently used; would enable CloudWatch metrics |
-| `AWS_SECRET_ACCESS_KEY` | Optional | Not currently used |
+| `AWS_ACCESS_KEY_ID` | Optional | Not currently used; does not enable metrics by itself |
+| `AWS_SECRET_ACCESS_KEY` | Optional | Not currently used; does not enable metrics by itself |
 | `AWS_REGION` | Optional | Used as fallback region label in monitoring |
 
 ### Other
@@ -642,18 +644,19 @@ The worker at `worker/` is deployed separately via `wrangler deploy`. It reads f
 - `npm run lint`
 - `npm run type-check`
 - `npm run test` (vitest --run)
+- `npm run build`
 
-Build (`npm run build`) is run by Vercel, not CI.
+Vercel also runs the production build during deployment.
 
 ---
 
 ## Q. CURRENT PRODUCTION STATUS
 
-Verified at HEAD commit `f754dda`.
+Verified by the 2026-08-31 source reconciliation pass.
 
 ```
 npm run type-check  → PASS (0 errors)
-npm run test        → PASS (22 files, 439 tests)
+npm run test        → PASS (24 files, 448 tests)
 npm run build       → PASS
 ```
 
@@ -688,7 +691,7 @@ npm run build       → PASS
 
 ## R. KNOWN LIMITATIONS / UNFINISHED WORK
 
-1. **AWS CPU/RAM/Disk/Network metrics**: Not configured. Requires AWS credentials. Displays "Not configured" — do not fabricate.
+1. **AWS CPU/RAM/Disk/Network metrics**: Not implemented. Displays "Not configured"; credentials alone do not enable it. Do not fabricate.
 
 2. **Customer Telegram delivery**: Intentionally not implemented. Do not add.
 
@@ -699,6 +702,8 @@ npm run build       → PASS
 5. **Cycle UI hidden**: The underlying cycle/period state (cyclesTotal, cyclesUsed, periodStart) still exists in Redis and drives enforcement. It is intentionally hidden from the admin customer card UI. Do not re-expose without being asked.
 
 6. **Worker cron separate deployment**: The Cloudflare Worker that calls `/api/v1/cron/tick` hourly must be deployed and scheduled separately via `wrangler`. If it is not deployed, the Vercel cron (daily at 03:00 UTC) is the only schedule — customers may wait up to 24 hours for expiry processing.
+
+   The checked-in `ROLLOVER_URL` targets the canonical Vercel production endpoint. Worker deployment remains separate from Vercel deployment.
 
 7. **Upstash free tier KV write limit**: 1,000 CF KV writes/day. Cycle rollovers cost 0 writes (by design). Bulk migrations or many simultaneous disable/enable operations could approach this limit.
 
@@ -712,7 +717,7 @@ Do not repeat these mistakes.
 
 2. **Plain-text `ss://` in `/k/` response broke clients.** Outline clients expect JSON format. Plain-text ss:// is legacy. The current route correctly returns JSON.
 
-3. **`#customer-name` fragment on ssconf URL broke connections.** Outline clients parse the fragment; adding a `#Name` to the URL caused some clients to fail. New permanent keys do not include the fragment. Names live only in the browser-side URL builder for display.
+3. **`#customer-name` fragment on ssconf URL broke connections.** Outline clients parse the fragment; adding a `#Name` to the URL caused some clients to fail. New permanent keys do not include the fragment. Legacy fragmented URLs remain parseable only for token recovery.
 
 4. **Telegram order success ≠ login approval success.** Order notifications and login approval use different paths. When login approval stopped working, order notifications continued working. Always check login delivery telemetry (`monitor:login:last`) separately.
 
@@ -810,5 +815,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (22 files, ≥439 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (24 files, ≥448 tests)
 - [ ] **Build passes** — `npm run build` exits 0

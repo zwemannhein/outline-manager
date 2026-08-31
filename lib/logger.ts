@@ -16,7 +16,7 @@ const isDevelopment = process.env.NODE_ENV === "development";
  * (`*.field`), which covers the `logger.error({ error, ctx }, msg)` shape used
  * throughout the API routes.
  */
-const SENSITIVE_FIELDS = [
+export const SENSITIVE_FIELDS = [
   // Outline management credentials
   "apiUrl",
   "certSha256",
@@ -32,6 +32,12 @@ const SENSITIVE_FIELDS = [
   "Authorization",
   "claimToken",
   "browserSecretHash",
+  // Telegram identities and bindings
+  "userId",
+  "telegramUserId",
+  "chatId",
+  "incomingChatId",
+  "targetUserId",
   // Infrastructure credentials
   "UPSTASH_REDIS_REST_TOKEN",
   "KV_REST_API_TOKEN",
@@ -41,7 +47,7 @@ const SENSITIVE_FIELDS = [
   "CF_KV_API_TOKEN",
 ];
 
-const REDACT_PATHS = [
+export const REDACT_PATHS = [
   ...SENSITIVE_FIELDS,
   ...SENSITIVE_FIELDS.map((f) => `*.${f}`),
   // Explicit nested paths that the wildcard cannot reach

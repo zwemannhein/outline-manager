@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     const deepLink = `https://t.me/${botUsername}?start=${pending.token}`;
 
     logger.info(
-      { user: auth.username, expectedUsername: pending.expectedUsername || "(any)" },
+      { user: auth.username, usernameRestricted: Boolean(pending.expectedUsername) },
       "Telegram link token issued"
     );
 

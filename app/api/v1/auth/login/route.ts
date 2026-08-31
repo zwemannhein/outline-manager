@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
       } else {
         deliverFailed++;
         lastFailureCategory = result.error ?? "unknown";
-        logger.warn({ chatId: "[redacted]", error: result.error }, "Failed to deliver login approval request");
+        logger.warn("Failed to deliver login approval request to a configured recipient");
       }
     }
 

@@ -11,7 +11,7 @@
  */
 
 /** Fallback when neither environment variable is configured. */
-export const DEFAULT_DYNAMIC_HOST = "outline-config.zwellmunheimn.workers.dev";
+export const DEFAULT_DYNAMIC_HOST = "outline-manager.vercel.app";
 
 /** Exactly 32 lowercase hex characters (128 bits). Uppercase is rejected. */
 export function isValidDynamicToken(value: unknown): value is string {
@@ -40,7 +40,7 @@ export function getDynamicBaseHost(): string {
 }
 
 /**
- * Percent-encode a customer name for use as a URI fragment.
+ * Percent-encode a customer name from a legacy URI fragment.
  *
  * encodeURIComponent handles spaces, Burmese script and emoji. `!'()*` are
  * additionally escaped because encodeURIComponent leaves them literal and some
@@ -63,20 +63,18 @@ export function encodeDisplayName(name?: string | null): string {
  * the query when fetching a remote config, and a path survives copy-paste and
  * chat-app link detection better.
  *
- * The name goes in the OUTER fragment. Fragments are never transmitted in an HTTP
- * request, so the Worker cannot see it — the name is presentation metadata and
- * structurally cannot participate in lookup.
+ * Customer names are deliberately not appended. Real-device testing found that
+ * fragments can break Outline imports even though browsers do not transmit them
+ * to the resolver. The optional argument remains for source compatibility with
+ * older call sites, but it cannot affect the generated URL.
  */
-export function buildDynamicUrl(token: string, name?: string | null): string {
+export function buildDynamicUrl(token: string, _name?: string | null): string {
   if (!isValidDynamicToken(token)) {
     throw new Error("buildDynamicUrl: invalid dynamic token");
   }
 
   const base = getDynamicBaseUrl().replace(/^https?:\/\//i, "");
-  const url = `ssconf://${base}/k/${token}`;
-
-  const label = encodeDisplayName(name);
-  return label ? `${url}#${label}` : url;
+  return `ssconf://${base}/k/${token}`;
 }
 
 /** The https:// form of the same endpoint, for diagnostics. */

@@ -33,8 +33,8 @@ The admin dashboard allows a single administrator to:
 - Telegram approvers can only Approve/Reject admin login requests via Telegram.
 - They have no dashboard password, no JWT, and no access to the admin UI.
 - Any number of approvers may be linked (including zero — env var fallback is used).
-- Authorization uses the verified numeric **Telegram `user_id`** and `chat_id` — never username alone.
-- The `/start <token>` Telegram linking flow is the only safe way to register an approver.
+- Authorization requires the verified numeric **Telegram `user_id`** and its stored `chat_id` binding — never username alone.
+- The `/start <token>` Telegram linking flow in a private bot chat is the only safe way to register an approver.
 
 ### Permanent Customer Key Rules
 
@@ -84,6 +84,7 @@ The admin dashboard allows a single administrator to:
 
 - Edits both quota and expiry together.
 - The **Renew** button has been removed from the UI. Do not re-add it.
+- Dormant/internal renewal helpers may remain for compatibility; they are not an active admin UI flow.
 
 ### Disable/Enable
 
@@ -125,7 +126,8 @@ Additional rules:
 
 - System Monitoring is **READ-ONLY**. It never mutates customer, Outline, or auth state.
 - Do not add auto-repair actions without explicit request.
-- AWS/Lightsail resource metrics (CPU/RAM/Disk/Network) are **not configured** — display "Not configured".
+- AWS/Lightsail resource metrics (CPU/RAM/Disk/Network) are **not implemented** — display "Not configured".
+- Adding AWS credentials alone does not enable resource metrics.
 - Do not fabricate resource metrics.
 - `not_configured` status must never make the overall system health Critical.
 - All health checks run with `Promise.allSettled` — one failing service must not block others.

@@ -33,6 +33,8 @@ import {
   getApproverChatIds,
   isLinkedApprover,
   isValidLinkToken,
+  authorizeTelegramCallback,
+  isPrivateTelegramBinding,
   LINK_TTL_SECONDS,
 } from "@/lib/telegram-approvers";
 import {
@@ -388,6 +390,69 @@ describe("O. username alone cannot authorise", () => {
     const result = await consumeLinkToken(token);
     expect(result!.expectedUsername).toBe("victor");
     // A user with a different username should be rejected by the caller.
+  });
+});
+
+describe("O2. callback user and chat binding", () => {
+  const approvers = [
+    {
+      userId: "1001",
+      chatId: "1001",
+      username: "linked-name",
+      linkedAt: "2026-08-31T00:00:00.000Z",
+      status: "linked" as const,
+    },
+  ];
+
+  it("accepts the correct linked user_id and chat binding", () => {
+    expect(authorizeTelegramCallback({
+      approvers,
+      staticChatIds: [],
+      telegramUserId: "1001",
+      chatId: "1001",
+    })).toEqual({ authorized: true, source: "linked" });
+  });
+
+  it("rejects a different Telegram user clicking in the bound chat", () => {
+    expect(authorizeTelegramCallback({
+      approvers,
+      staticChatIds: [],
+      telegramUserId: "2002",
+      chatId: "1001",
+    }).authorized).toBe(false);
+  });
+
+  it("rejects the linked user from a different chat", () => {
+    expect(authorizeTelegramCallback({
+      approvers,
+      staticChatIds: [],
+      telegramUserId: "1001",
+      chatId: "3003",
+    }).authorized).toBe(false);
+  });
+
+  it("preserves the legacy static fallback for its private user/chat binding", () => {
+    expect(authorizeTelegramCallback({
+      approvers: [],
+      staticChatIds: ["4004"],
+      telegramUserId: "4004",
+      chatId: "4004",
+    })).toEqual({ authorized: true, source: "legacy_static" });
+  });
+
+  it("does not let another user authorize through a legacy static chat", () => {
+    expect(authorizeTelegramCallback({
+      approvers: [],
+      staticChatIds: ["4004"],
+      telegramUserId: "5005",
+      chatId: "4004",
+    }).authorized).toBe(false);
+  });
+
+  it("requires a private user/chat binding for new approver links", () => {
+    expect(isPrivateTelegramBinding("private", "6006", "6006")).toBe(true);
+    expect(isPrivateTelegramBinding("group", "6006", "-7007")).toBe(false);
+    expect(isPrivateTelegramBinding("private", "6006", "7007")).toBe(false);
   });
 });
 

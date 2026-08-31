@@ -8,10 +8,12 @@
  * SECURITY MODEL
  *  1. X-Telegram-Bot-Api-Secret-Token is verified against TELEGRAM_WEBHOOK_SECRET
  *     when that variable is configured.
- *  2. For callback_query: chatId is checked against linked approvers + TELEGRAM_CHAT_ID.
+ *  2. Linked callbacks require both the stored numeric user_id and chat binding.
+ *     Legacy TELEGRAM_CHAT_ID callbacks require a private user_id === chat_id binding.
  *  3. The Telegram numeric user_id is the permanent security identity; username
  *     alone cannot authorize any action.
- *  4. No secrets, access URLs, or upstream error strings are logged or sent back.
+ *  4. New approver links must be completed in a private bot chat.
+ *  5. No secrets, access URLs, or upstream error strings are logged or sent back.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -35,6 +37,8 @@ import {
   isValidLinkToken,
   linkApprover,
   listApprovers,
+  authorizeTelegramCallback,
+  isPrivateTelegramBinding,
 } from "@/lib/telegram-approvers";
 import { timingSafeEqual, createHash } from "crypto";
 
@@ -62,7 +66,7 @@ interface TelegramUpdate {
   callback_query?: {
     id: string;
     from: TelegramUser;
-    message: { message_id: number; chat: { id: number } };
+    message: { message_id: number; chat: { id: number; type?: string } };
     data: string;
   };
 }
@@ -128,6 +132,7 @@ export async function POST(req: NextRequest) {
           token: startMatch[1].toLowerCase(),
           from: msg.from,
           chatId: String(msg.chat.id),
+          chatType: msg.chat.type,
         });
       }
       // Bare /start — acknowledge
@@ -145,23 +150,30 @@ export async function POST(req: NextRequest) {
     if (!update.callback_query) return NextResponse.json({ ok: true });
     const { callback_query } = update;
 
-    // Build the combined chatId allowlist: linked approvers + static env config.
+    // Authorize using Telegram's numeric user_id plus the verified chat binding.
     const approvers = await listApprovers();
-    const linkedChatIds = approvers.map((a) => a.chatId);
     const staticIds = staticChatId
       ? staticChatId.split(",").map((s) => s.trim()).filter(Boolean)
       : [];
-    const seen = new Set<string>();
-    const allowedIds: string[] = [];
-    for (const id of [...linkedChatIds, ...staticIds]) {
-      if (!seen.has(id)) { seen.add(id); allowedIds.push(id); }
-    }
-
     const incomingChatId = callback_query.message.chat.id.toString();
-    if (!allowedIds.includes(incomingChatId)) {
-      logger.warn({ incomingChatId }, "Telegram webhook rejected: chat id not in allow-list");
+    const telegramUserId = String(callback_query.from.id);
+    const authorization = authorizeTelegramCallback({
+      approvers,
+      staticChatIds: staticIds,
+      telegramUserId,
+      chatId: incomingChatId,
+    });
+    if (!authorization.authorized) {
+      logger.warn(
+        { reason: authorization.reason },
+        "Telegram callback rejected: identity or chat binding mismatch"
+      );
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 403 });
     }
+
+    const allowedIds = Array.from(
+      new Set([...approvers.map((approver) => approver.chatId), ...staticIds])
+    );
 
     const parsed = parseCallbackData(callback_query.data);
 
@@ -202,8 +214,18 @@ async function handleStartLink(ctx: {
   token: string;
   from: TelegramUser;
   chatId: string;
+  chatType: string;
 }): Promise<NextResponse> {
-  const { botToken, token, from, chatId } = ctx;
+  const { botToken, token, from, chatId, chatType } = ctx;
+
+  if (!isPrivateTelegramBinding(chatType, String(from.id), chatId)) {
+    await sendTelegramMessage(botToken, {
+      chat_id: chatId,
+      text: "❌ Approver linking must be completed in a private chat with this bot.",
+    });
+    logger.warn("Telegram approver link rejected: private chat binding required");
+    return NextResponse.json({ ok: false }, { status: 403 });
+  }
 
   if (!isValidLinkToken(token)) {
     await sendTelegramMessage(botToken, {
@@ -221,7 +243,7 @@ async function handleStartLink(ctx: {
       chat_id: chatId,
       text: "❌ This link has expired or already been used. Please ask the admin to generate a new one.",
     });
-    logger.warn({ token: maskId(token) }, "Telegram link token invalid/expired/consumed");
+    logger.warn("Telegram link token invalid, expired, or consumed");
     return NextResponse.json({ ok: false });
   }
 
@@ -235,10 +257,7 @@ async function handleStartLink(ctx: {
         `but you are logged in as ${from.username ? "@" + from.username : "a user without a username"}.\n\n` +
         `Please ask the admin to generate a new link for your account.`,
     });
-    logger.warn(
-      { expected: link.expectedUsername, got: incomingUsername },
-      "Telegram link username mismatch"
-    );
+    logger.warn("Telegram link username mismatch");
     return NextResponse.json({ ok: false });
   }
 
@@ -257,10 +276,7 @@ async function handleStartLink(ctx: {
       "Tap Approve or Reject to respond.",
   });
 
-  logger.info(
-    { userId: String(from.id), username: from.username ?? "" },
-    "Telegram approver linked via /start"
-  );
+  logger.info("Telegram approver linked via private /start flow");
 
   return NextResponse.json({ ok: true });
 }
