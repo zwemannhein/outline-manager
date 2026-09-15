@@ -460,6 +460,11 @@ the record is orphaned. Inventory IDs are normalized to strings before compariso
 because Outline 1.12.x may return numeric-looking IDs as JSON numbers while Redis
 stores the same IDs as strings.
 
+Customer status badges prioritize the actionable subscription reason: Disabled or
+Expired first, then Quota exhausted, and only then Missing key for an otherwise
+active usable subscription. Concurrent Outline recovery needs remain a secondary
+hint rather than replacing the primary status.
+
 ---
 
 ## K. MIGRATION

@@ -108,6 +108,9 @@ describe("customer usage reset UI", () => {
   it("surfaces a missing key and keeps the recovery disable action available", async () => {
     const payload = await mocks.fetchDynamicCustomers();
     payload.customers[0].orphaned = true;
+    payload.customers[0].quotaExhausted = false;
+    payload.customers[0].usedBytes = 50 * GIB;
+    payload.customers[0].remainingBytes = 50 * GIB;
     mocks.fetchDynamicCustomers.mockResolvedValue(payload);
 
     render(<CustomersPanel servers={[{ id: "srv-a", name: "Server A" }]} />);
@@ -118,5 +121,30 @@ describe("customer usage reset UI", () => {
     expect(screen.getByRole("button", { name: /reset usage/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /migrate/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /permanent key not ready/i })).toBeDisabled();
+  });
+
+  it("shows quota exhaustion as the primary status even when key recovery is also needed", async () => {
+    const payload = await mocks.fetchDynamicCustomers();
+    payload.customers[0].orphaned = true;
+    mocks.fetchDynamicCustomers.mockResolvedValue(payload);
+
+    render(<CustomersPanel servers={[{ id: "srv-a", name: "Server A" }]} />);
+
+    expect(await screen.findByText("Quota exhausted")).toBeInTheDocument();
+    expect(screen.queryByText("Missing key")).not.toBeInTheDocument();
+    expect(screen.getByText(/key recovery is also required/i)).toBeInTheDocument();
+  });
+
+  it("shows expiry as the primary status even when key recovery is also needed", async () => {
+    const payload = await mocks.fetchDynamicCustomers();
+    payload.customers[0].status = "expired";
+    payload.customers[0].orphaned = true;
+    mocks.fetchDynamicCustomers.mockResolvedValue(payload);
+
+    render(<CustomersPanel servers={[{ id: "srv-a", name: "Server A" }]} />);
+
+    expect(await screen.findByText("Expired")).toBeInTheDocument();
+    expect(screen.queryByText("Missing key")).not.toBeInTheDocument();
+    expect(screen.getByText(/key recovery is also required/i)).toBeInTheDocument();
   });
 });

@@ -50,19 +50,32 @@ type CustomerFilter = "all" | "active" | "disabled" | "expired" | "unlimited" | 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function isCustomerExpired(row: DynamicCustomerRow): boolean {
+  if (row.status === "expired") return true;
+  if (row.status !== "active" || !row.expiryDate) return false;
+  const expiry = Date.parse(row.expiryDate);
+  return !Number.isNaN(expiry) && expiry <= Date.now();
+}
+
 function statusBadge(row: DynamicCustomerRow) {
+  switch (row.status) {
+    case "disabled": return <Badge variant="secondary" className="text-xs">Disabled</Badge>;
+    case "revoked":  return <Badge variant="destructive" className="text-xs">Revoked</Badge>;
+  }
+
+  // Subscription state is the primary customer-facing reason access is
+  // unavailable. A missing physical key is only the headline when an otherwise
+  // usable active subscription needs recovery.
+  if (isCustomerExpired(row)) {
+    return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Expired</Badge>;
+  }
+  if (row.quotaExhausted) {
+    return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Quota exhausted</Badge>;
+  }
   if (row.orphaned) {
     return <Badge variant="destructive" className="text-xs">Missing key</Badge>;
   }
-  if (row.status === "active" && row.quotaExhausted) {
-    return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Quota exhausted</Badge>;
-  }
-  switch (row.status) {
-    case "active":   return <Badge className="bg-green-600 hover:bg-green-600 text-xs">Active</Badge>;
-    case "disabled": return <Badge variant="secondary" className="text-xs">Disabled</Badge>;
-    case "expired":  return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Expired</Badge>;
-    default:         return <Badge variant="destructive" className="text-xs">Revoked</Badge>;
-  }
+  return <Badge className="bg-green-600 hover:bg-green-600 text-xs">Active</Badge>;
 }
 
 function usageLabel(row: DynamicCustomerRow): string {
@@ -444,10 +457,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         {busyMsg}
                       </p>
                     )}
-                    {row.orphaned && !busyMsg && (
+                    {row.orphaned && row.status === "active" && !isCustomerExpired(row) && !row.quotaExhausted && !busyMsg && (
                       <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-destructive">
                         <AlertTriangle className="h-3 w-3" />
                         Disable, then enable this customer to recreate the missing key.
+                      </p>
+                    )}
+                    {row.orphaned && (row.status !== "active" || isCustomerExpired(row) || row.quotaExhausted) && !busyMsg && (
+                      <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        <AlertTriangle className="h-3 w-3" />
+                        Outline key recovery is also required before reactivation.
                       </p>
                     )}
                   </div>
