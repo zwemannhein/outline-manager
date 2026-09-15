@@ -25,7 +25,7 @@ import { timingSafeEqual, createHash } from "crypto";
 import { handleApiError, successResponse } from "@/lib/api-utils";
 import { processExpiries, processCycleRollovers } from "@/lib/quota-cycles";
 import { drainDirtyDynamicRecords } from "@/lib/kv-sync";
-import { writeCronSummary } from "@/lib/monitoring";
+import { writeCronSummary, type CronTriggerSource } from "@/lib/monitoring";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("cron");
@@ -56,7 +56,28 @@ function authorised(req: NextRequest): boolean {
   return false;
 }
 
-async function runTick() {
+/**
+ * Derive the trigger source WITHOUT trusting arbitrary body text.
+ *  - Vercel Cron always sends the `x-vercel-cron-signature` header.
+ *  - The Cloudflare Worker sends `{ source: "cloudflare-cron" }` in the body;
+ *    only that exact literal is accepted, everything else is "manual".
+ * The value is validated to a fixed allow-list by normalizeCronSource on write.
+ */
+async function deriveSource(req: NextRequest): Promise<CronTriggerSource> {
+  if (req.headers.get("x-vercel-cron-signature")) return "vercel";
+  try {
+    const bodyText = await req.clone().text();
+    if (bodyText) {
+      const parsed = JSON.parse(bodyText) as { source?: unknown };
+      if (parsed?.source === "cloudflare-cron") return "cloudflare";
+    }
+  } catch {
+    // Non-JSON or empty body — fall through.
+  }
+  return "manual";
+}
+
+async function runTick(source: CronTriggerSource) {
   const startedAt = Date.now();
 
   // 1. Expiry first, so an ended subscription cannot gain a cycle below.
@@ -77,9 +98,10 @@ async function runTick() {
     expiry:   { processed: expiry.expired    ?? 0, failed: expiry.failed   ?? 0 },
     rollover: { processed: rollover.rolled   ?? 0, failed: rollover.failed ?? 0 },
     drain:    { synced:    drain.synced      ?? 0, failed: drain.failed    ?? 0 },
+    source,
   });
 
-  logger.info({ expiry, rollover, drain, durationMs }, "Cron tick complete");
+  logger.info({ expiry, rollover, drain, durationMs, source }, "Cron tick complete");
 
   return { expiry, rollover, drain, durationMs };
 }
@@ -92,7 +114,8 @@ export async function POST(req: NextRequest) {
       return new Response(null, { status: 404 });
     }
 
-    const result = await runTick();
+    const source = await deriveSource(req);
+    const result = await runTick(source);
     return successResponse({ ok: true, ...result });
   } catch (error) {
     return handleApiError(error);

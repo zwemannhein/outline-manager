@@ -775,6 +775,10 @@ export interface SystemHealth {
       expiryProcessed: number;
       quotaProcessed: number;
       dirtySyncProcessed: number;
+      expiryFailed: number;
+      quotaFailed: number;
+      dirtySyncFailed: number;
+      source: "cloudflare" | "vercel" | "manual" | "unknown";
     } | null;
   };
   dynamicConfig: {
@@ -896,4 +900,35 @@ export async function deleteAdminCustomer(token: string): Promise<{
     kvProjectionRemoved: boolean;
     alreadyDeleted?: boolean;
   };
+}
+
+// ── Read-only server details ───────────────────────────────────────────────────
+
+export interface ServerDetails {
+  serverId: string;
+  name: string;
+  online: boolean;
+  status: MonitorHealthStatus;
+  version: string | null;
+  metricsEnabled: boolean | null;
+  totalKeys: number;
+  totalDataUsedBytes: number;
+  managedCustomers: number;
+  activeCustomers: number;
+  disabledCustomers: number;
+  expiredCustomers: number;
+  unmanagedKeys: number;
+  missingKeys: number;
+  detail?: string;
+  checkedAt: string;
+}
+
+export async function fetchServerDetails(serverId: string): Promise<ServerDetails> {
+  const auth = makeAuthHeader();
+  if (!auth) throw new Error("Not signed in.");
+  const res = await fetch(`/api/v1/servers/${encodeURIComponent(serverId)}/details`, {
+    headers: { Authorization: auth },
+  });
+  if (!res.ok) throw new Error(await readError(res, "Could not load server details"));
+  return (await res.json()) as ServerDetails;
 }

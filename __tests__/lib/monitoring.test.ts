@@ -68,6 +68,63 @@ describe("Cron summary write/read", () => {
     const summary = await readCronSummary();
     expect(summary).toBeNull();
   });
+
+  it("stores per-stage failure counts separately", async () => {
+    await writeCronSummary({
+      startedAt: Date.now() - 800,
+      expiry:   { processed: 1, failed: 2 },
+      rollover: { processed: 3, failed: 1 },
+      drain:    { synced: 4,    failed: 5 },
+      source: "cloudflare",
+    });
+
+    const summary = await readCronSummary();
+    expect(summary).not.toBeNull();
+    expect(summary!.expiryFailed).toBe(2);
+    expect(summary!.quotaFailed).toBe(1);
+    expect(summary!.dirtySyncFailed).toBe(5);
+    expect(summary!.failed).toBe(8); // 2 + 1 + 5
+    expect(summary!.source).toBe("cloudflare");
+  });
+
+  it("defaults per-stage failure counts to 0 for legacy records without them", async () => {
+    // Legacy record shape: no per-stage fields, only combined `failed`.
+    await fakeRedis.hset(MONITOR_CRON_KEY, {
+      lastStartedAt: new Date().toISOString(),
+      lastCompletedAt: new Date().toISOString(),
+      durationMs: "100",
+      processed: "0",
+      failed: "1",
+      expiryProcessed: "0",
+      quotaProcessed: "0",
+      dirtySyncProcessed: "0",
+    });
+    const summary = await readCronSummary();
+    expect(summary!.expiryFailed).toBe(0);
+    expect(summary!.quotaFailed).toBe(0);
+    expect(summary!.dirtySyncFailed).toBe(0);
+    expect(summary!.source).toBe("unknown");
+  });
+});
+
+// ── Cron trigger source normalization ─────────────────────────────────────────
+
+describe("normalizeCronSource", () => {
+  it("accepts only the known sources", async () => {
+    const { normalizeCronSource } = await import("@/lib/monitoring");
+    expect(normalizeCronSource("cloudflare")).toBe("cloudflare");
+    expect(normalizeCronSource("vercel")).toBe("vercel");
+    expect(normalizeCronSource("manual")).toBe("manual");
+  });
+
+  it("rejects arbitrary/spoofed values as unknown", async () => {
+    const { normalizeCronSource } = await import("@/lib/monitoring");
+    expect(normalizeCronSource("cloudflare-cron")).toBe("unknown");
+    expect(normalizeCronSource("attacker")).toBe("unknown");
+    expect(normalizeCronSource(undefined)).toBe("unknown");
+    expect(normalizeCronSource(null)).toBe("unknown");
+    expect(normalizeCronSource(42)).toBe("unknown");
+  });
 });
 
 // ── Cron health derivation ────────────────────────────────────────────────────

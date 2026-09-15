@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { ServerSidebar } from "./ServerSidebar";
-import { ServerDashboard } from "./ServerDashboard";
+import { ServerDetails } from "./ServerDetails";
 import { AddServerDialog } from "./Dialogs";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import { FirstRunPasswordSetup } from "./FirstRunPasswordSetup";
@@ -54,7 +54,9 @@ export function AdminView({ onLogout }: AdminViewProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [serverSidebarExpanded, setServerSidebarExpanded] = useState(true);
   const [syncing, setSyncing] = useState(true);
-  const [activeTab, setActiveTab] = useState<AdminTab>("servers");
+  // Customers is the default admin page after login. Selecting a server from the
+  // sidebar switches to the read-only "servers" (Server Details) view.
+  const [activeTab, setActiveTab] = useState<AdminTab>("customers");
 
   const [passwordSetupRequired, setPasswordSetupRequired] = useState<boolean | null>(null);
 
@@ -293,7 +295,7 @@ export function AdminView({ onLogout }: AdminViewProps) {
         {/* Only main content changes; the global sidebar above remains mounted. */}
         {activeTab === "servers" ? (
           activeServer ? (
-            <ServerDashboard
+            <ServerDetails
               key={activeServer.id}
               server={activeServer}
               onOnlineChange={handleOnlineChange}

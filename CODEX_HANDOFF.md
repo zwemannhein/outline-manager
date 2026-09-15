@@ -94,13 +94,13 @@ outline-manager/
 │   ├── DiagnoseDialog.tsx     ← Per-customer read-only diagnostic panel
 │   ├── MonitoringPanel.tsx    ← System health dashboard UI
 │   ├── OrdersPanel.tsx        ← Order list and approval
-│   ├── ServerDashboard.tsx    ← Per-server key management
+│   ├── ServerDetails.tsx      ← READ-ONLY per-server overview (no key mutations)
 │   ├── ServerSidebar.tsx      ← Server selector sidebar
 │   ├── SettingsPanel.tsx      ← Telegram Approvers management
 │   ├── ChangePasswordDialog.tsx
 │   ├── FirstRunPasswordSetup.tsx
 │   ├── Dialogs.tsx            ← Shared dialogs (AddServer, RenameKey, SetLimit, etc.)
-│   └── KeyTable.tsx           ← Outline key table for ServerDashboard
+│   (ServerDashboard.tsx and KeyTable.tsx were removed — raw key operations retired)
 │
 ├── lib/
 │   ├── admin-auth.ts         ← Password hashing (scrypt), verify, first-run bootstrap
@@ -209,7 +209,7 @@ Identity `status` values: `active` | `disabled` | `expired` | `revoked`
 
 | Key | Type | Purpose |
 |---|---|---|
-| `monitor:cron:last` | HASH TTL 25h | lastStartedAt, lastCompletedAt, durationMs, processed, failed, expiryProcessed, quotaProcessed, dirtySyncProcessed |
+| `monitor:cron:last` | HASH TTL 25h | lastStartedAt, lastCompletedAt, durationMs, processed, failed, expiryProcessed, quotaProcessed, dirtySyncProcessed, **expiryFailed, quotaFailed, dirtySyncFailed, source** |
 | `monitor:login:last` | HASH TTL 7d | challengeCreatedAt, recipientsAttempted, deliverSucceeded, deliverFailed, lastFailureCategory (sanitised) |
 | `monitor:system:cache` | STRING TTL 30s | Cached system health JSON payload |
 | `monitor:outline:cache` | STRING TTL 30s | Cached Outline health JSON payload |
@@ -541,24 +541,42 @@ Written after every login attempt. Contains: challengeCreatedAt, recipientsAttem
 
 ## N. CRON / BACKGROUND JOBS
 
-### Schedule
+### Schedule (canonical architecture)
 
-- **Vercel cron** (vercel.json): `0 3 * * *` — daily at 03:00 UTC (Hobby plan limitation).
-- **Cloudflare scheduled Worker** (`worker/src/cron.ts`): hourly — sends Bearer token to `POST /api/v1/cron/tick`. This is the primary schedule.
-- Both call the same endpoint. The endpoint is idempotent.
+- **Cloudflare scheduled Worker** `outline-cron` (`worker/src/cron.ts`, config `worker/wrangler.cron.toml`): **hourly** trigger `0 * * * *`. This is the PRIMARY schedule. It POSTs to `ROLLOVER_URL = https://outline-manager.vercel.app/api/v1/cron/tick` with `Authorization: Bearer <CRON_SECRET>` and body `{ "source": "cloudflare-cron" }`.
+- **Vercel cron** (`vercel.json`): `0 3 * * *` — daily at 03:00 UTC. FALLBACK only (Hobby plan caps cron at once/day). Sends `x-vercel-cron-signature: <CRON_SECRET>`.
+- Both call the same idempotent endpoint. `outline-cron` is DEPLOYED (see section Q).
 
 ### Authentication
 
-`Authorization: Bearer <CRON_SECRET>` or `x-vercel-cron-signature: <CRON_SECRET>`.
+`Authorization: Bearer <CRON_SECRET>` or `x-vercel-cron-signature: <CRON_SECRET>`. Missing/wrong secret → 404 (fail-closed, endpoint invisible). The Cloudflare `CRON_SECRET` and Vercel production `CRON_SECRET` must be identical (they were rotated together to a single fresh value during this deployment; the value was never printed or written to disk).
+
+### Trigger source derivation (safe)
+
+The route derives the trigger source WITHOUT trusting arbitrary body text:
+- `x-vercel-cron-signature` header present → `vercel`
+- body is exactly `{ "source": "cloudflare-cron" }` → `cloudflare`
+- otherwise → `manual`
+The value is validated against a fixed allow-list (`normalizeCronSource`) before storage; any other string becomes `unknown`.
 
 ### What Each Tick Does (in order)
 
 1. `processExpiries(nowMs, 50)` — disable customers whose `dyn:expiry_due` score ≤ now.
 2. `processCycleRollovers(nowMs, 50)` — advance 30-day cycle for customers whose `dyn:cycle_due` score ≤ now. **Zero** CF KV writes.
 3. `drainDirtyDynamicRecords(25)` — retry any CF KV projections that previously failed.
-4. `writeCronSummary(...)` — persist results to `monitor:cron:last` (TTL 25h).
+4. `writeCronSummary(...)` — persist results to `monitor:cron:last` (TTL 25h), including per-stage failure counts (`expiryFailed`, `quotaFailed`, `dirtySyncFailed`) and the validated `source`.
 
 Each pass is bounded (50/50/25 items) to stay within Vercel function timeout and CF KV write budget.
+
+### Server Details architecture (read-only)
+
+- The top "Servers" navigation tab is intentionally absent. **Customers** is the default admin page after login.
+- Selecting a server from the persistent left sidebar (or the mobile drawer) opens a **read-only** Server Details view (`components/admin/ServerDetails.tsx`), backed by `GET /api/v1/servers/<serverId>/details`.
+- Server Details shows only safe operational data: display name, online/offline, Outline version, metrics enabled, total keys, total data used, managed/active/disabled/expired customer counts, unmanaged key count, missing-key count, last refreshed, and a manual Refresh button.
+- There are NO raw key mutation actions anywhere in Server Details (no New/Rename/Set Data Limit/Set Expiry/Delete Key). All key and customer lifecycle management is centralized in the Customers tab.
+- Unmanaged keys are surfaced with guidance: attach them via **Customers → Add → Use Existing Outline Key**.
+- The endpoint never returns the management API URL, cert fingerprint, raw `ss://` keys, passwords, or tokens.
+- `ServerDashboard.tsx` and `KeyTable.tsx` (the former operational key table) were removed.
 
 ---
 

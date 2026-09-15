@@ -35,8 +35,8 @@ vi.mock("@/components/admin/ServerSidebar", () => ({
     </aside>
   ),
 }));
-vi.mock("@/components/admin/ServerDashboard", () => ({
-  ServerDashboard: () => <div>Server dashboard</div>,
+vi.mock("@/components/admin/ServerDetails", () => ({
+  ServerDetails: () => <div>Server details view</div>,
 }));
 vi.mock("@/components/admin/CustomersPanel", () => ({
   CustomersPanel: () => <div>Customer management</div>,
@@ -53,18 +53,30 @@ import { AdminView } from "@/components/admin/AdminView";
 afterEach(() => cleanup());
 
 describe("AdminView server navigation", () => {
-  it("omits the duplicate top Servers tab while keeping server management reachable", async () => {
+  it("defaults to Customers, keeps the top Servers tab absent, and opens Server Details from the sidebar", async () => {
     const user = userEvent.setup();
     render(<AdminView onLogout={vi.fn()} />);
 
-    expect(await screen.findByText("Server dashboard")).toBeInTheDocument();
+    // Customers is the default admin page after login.
+    expect(await screen.findByText("Customer management")).toBeInTheDocument();
+
+    // The duplicate top Servers navigation item stays absent.
     const topNav = screen.getByRole("navigation", { name: "Admin navigation" });
     expect(within(topNav).queryByRole("button", { name: "Servers" })).not.toBeInTheDocument();
 
-    await user.click(within(topNav).getByRole("button", { name: "Customers" }));
-    expect(await screen.findByText("Customer management")).toBeInTheDocument();
-
+    // Selecting a server from the sidebar opens the read-only Server Details view.
     await user.click(screen.getByRole("button", { name: "Production server" }));
-    await waitFor(() => expect(screen.getByText("Server dashboard")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Server details view")).toBeInTheDocument());
+  });
+
+  it("reaches Server Details through the mobile server drawer button", async () => {
+    const user = userEvent.setup();
+    render(<AdminView onLogout={vi.fn()} />);
+
+    await screen.findByText("Customer management");
+
+    // The mobile drawer uses the same sidebar; selecting a server opens details.
+    await user.click(screen.getByRole("button", { name: "Production server" }));
+    await waitFor(() => expect(screen.getByText("Server details view")).toBeInTheDocument());
   });
 });

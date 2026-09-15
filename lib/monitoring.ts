@@ -42,6 +42,15 @@ export interface CheckResult {
 
 // ── Cron summary ──────────────────────────────────────────────────────────────
 
+/** Where a cron tick originated. Derived from a validated allow-list, never trusted verbatim. */
+export type CronTriggerSource = "cloudflare" | "vercel" | "manual" | "unknown";
+
+/** Validate an arbitrary trigger-source hint against a fixed allow-list. */
+export function normalizeCronSource(hint: unknown): CronTriggerSource {
+  if (hint === "cloudflare" || hint === "vercel" || hint === "manual") return hint;
+  return "unknown";
+}
+
 export interface CronSummary {
   lastStartedAt: string;
   lastCompletedAt: string;
@@ -51,6 +60,12 @@ export interface CronSummary {
   expiryProcessed: number;
   quotaProcessed: number;
   dirtySyncProcessed: number;
+  /** Per-stage failure counts, so a single failure can be located. */
+  expiryFailed: number;
+  quotaFailed: number;
+  dirtySyncFailed: number;
+  /** Validated trigger source. */
+  source: CronTriggerSource;
 }
 
 /** Called at the END of each cron tick to persist a compact summary. */
@@ -59,10 +74,14 @@ export async function writeCronSummary(params: {
   expiry: { processed: number; failed: number };
   rollover: { processed: number; failed: number };
   drain: { synced: number; failed: number };
+  source?: CronTriggerSource;
 }): Promise<void> {
   try {
     const redis = getRedis();
     const now = Date.now();
+    const expiryFailed = params.expiry.failed ?? 0;
+    const quotaFailed = params.rollover.failed ?? 0;
+    const dirtySyncFailed = params.drain.failed ?? 0;
     const summary: Record<string, string> = {
       lastStartedAt:       new Date(params.startedAt).toISOString(),
       lastCompletedAt:     new Date(now).toISOString(),
@@ -72,14 +91,14 @@ export async function writeCronSummary(params: {
         (params.rollover.processed ?? 0) +
         (params.drain.synced ?? 0)
       ),
-      failed:              String(
-        (params.expiry.failed ?? 0) +
-        (params.rollover.failed ?? 0) +
-        (params.drain.failed ?? 0)
-      ),
+      failed:              String(expiryFailed + quotaFailed + dirtySyncFailed),
       expiryProcessed:     String(params.expiry.processed ?? 0),
       quotaProcessed:      String(params.rollover.processed ?? 0),
       dirtySyncProcessed:  String(params.drain.synced ?? 0),
+      expiryFailed:        String(expiryFailed),
+      quotaFailed:         String(quotaFailed),
+      dirtySyncFailed:     String(dirtySyncFailed),
+      source:              normalizeCronSource(params.source),
     };
     await redis.hset(MONITOR_CRON_KEY, summary);
     await redis.expire(MONITOR_CRON_KEY, CRON_SUMMARY_TTL);
@@ -104,6 +123,11 @@ export async function readCronSummary(): Promise<CronSummary | null> {
       expiryProcessed:    Number(raw.expiryProcessed ?? 0),
       quotaProcessed:     Number(raw.quotaProcessed ?? 0),
       dirtySyncProcessed: Number(raw.dirtySyncProcessed ?? 0),
+      // Absent in records written before this schema existed → default 0.
+      expiryFailed:       Number(raw.expiryFailed ?? 0),
+      quotaFailed:        Number(raw.quotaFailed ?? 0),
+      dirtySyncFailed:    Number(raw.dirtySyncFailed ?? 0),
+      source:             normalizeCronSource(raw.source),
     };
   } catch {
     return null;

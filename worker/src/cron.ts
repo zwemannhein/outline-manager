@@ -54,9 +54,19 @@ async function tick(env: Env): Promise<{ ok: boolean; status: number; detail: st
   }
 }
 
+/**
+ * Minimal structural type for the scheduled-handler context. Compatible with
+ * Cloudflare's real `ExecutionContext` (a superset) but resolvable even when the
+ * ambient Workers types are not loaded, so this module can be imported from the
+ * app's test suite without pulling @cloudflare/workers-types into the root.
+ */
+interface CronContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 export default {
   /** Hourly trigger. The endpoint is idempotent, so a duplicate run is harmless. */
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(_event: unknown, env: Env, ctx: CronContext): Promise<void> {
     ctx.waitUntil(
       tick(env).then((result) => {
         if (!result.ok) {

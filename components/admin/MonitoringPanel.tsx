@@ -315,12 +315,13 @@ export function MonitoringPanel() {
         {health.cron.summary ? (
           <>
             <Row label="Last run"     value={ago(health.cron.summary.lastCompletedAt)} />
+            <Row label="Trigger source" value={health.cron.summary.source} />
             <Row label="Duration"     value={`${health.cron.summary.durationMs}ms`} />
             <Row label="Processed"    value={health.cron.summary.processed} />
-            <Row label="Failed"       value={health.cron.summary.failed} tone={health.cron.summary.failed > 0 ? "text-amber-600" : undefined} />
-            <Row label="Expiries"     value={health.cron.summary.expiryProcessed} />
-            <Row label="Quota cycles" value={health.cron.summary.quotaProcessed} />
-            <Row label="Dirty syncs"  value={health.cron.summary.dirtySyncProcessed} />
+            <Row label="Failed (total)" value={health.cron.summary.failed} tone={health.cron.summary.failed > 0 ? "text-amber-600" : undefined} />
+            <Row label="Expiries"     value={`${health.cron.summary.expiryProcessed} ok · ${health.cron.summary.expiryFailed} failed`} tone={health.cron.summary.expiryFailed > 0 ? "text-red-600" : undefined} />
+            <Row label="Quota cycles" value={`${health.cron.summary.quotaProcessed} ok · ${health.cron.summary.quotaFailed} failed`} tone={health.cron.summary.quotaFailed > 0 ? "text-red-600" : undefined} />
+            <Row label="Dirty syncs"  value={`${health.cron.summary.dirtySyncProcessed} ok · ${health.cron.summary.dirtySyncFailed} failed`} tone={health.cron.summary.dirtySyncFailed > 0 ? "text-red-600" : undefined} />
           </>
         ) : (
           <Row label="Last run" value={<span className="text-muted-foreground italic">No run recorded yet</span>} />
