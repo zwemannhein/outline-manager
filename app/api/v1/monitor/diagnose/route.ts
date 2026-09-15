@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
           issues.push("Outline key is missing from the server");
           if (record.status === "active") {
             issues.push("Customer is marked Active but VPN key does not exist");
-            suggestedAction = "Enable the customer to recreate the key, or investigate orphaned records.";
+            suggestedAction = "Disable the customer, then enable them to recreate the missing key.";
           }
         }
       } catch {

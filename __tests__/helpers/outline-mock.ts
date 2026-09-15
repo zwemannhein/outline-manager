@@ -23,6 +23,10 @@ export function buildOutlineAdminMock() {
 
   return {
     OutlineApiError: MockOutlineApiError,
+    isOutlineNotFound: (error: unknown) =>
+      (error instanceof MockOutlineApiError && error.code === "NOT_FOUND") ||
+      (typeof error === "object" && error !== null && "status" in error &&
+        (error as { status?: unknown }).status === 404),
 
     listRegisteredServers: async () => fo.servers,
 

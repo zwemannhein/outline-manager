@@ -45,6 +45,14 @@ export class OutlineApiError extends Error {
   }
 }
 
+/** True only when Outline confirms that the requested resource is absent. */
+export function isOutlineNotFound(error: unknown): boolean {
+  if (error instanceof OutlineApiError) return error.code === "NOT_FOUND";
+  return typeof error === "object" && error !== null && "status" in error
+    ? (error as { status?: unknown }).status === 404
+    : false;
+}
+
 // ── Server registry ───────────────────────────────────────────────────────────
 
 interface AdminData {

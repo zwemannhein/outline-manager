@@ -51,6 +51,12 @@ type CustomerFilter = "all" | "active" | "disabled" | "expired" | "unlimited" | 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function statusBadge(row: DynamicCustomerRow) {
+  if (row.orphaned) {
+    return <Badge variant="destructive" className="text-xs">Missing key</Badge>;
+  }
+  if (row.status === "active" && row.quotaExhausted) {
+    return <Badge className="bg-amber-600 hover:bg-amber-600 text-xs">Quota exhausted</Badge>;
+  }
   switch (row.status) {
     case "active":   return <Badge className="bg-green-600 hover:bg-green-600 text-xs">Active</Badge>;
     case "disabled": return <Badge variant="secondary" className="text-xs">Disabled</Badge>;
@@ -401,6 +407,8 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
             const pct = usagePercent(row);
             const busy = isBusy(row);
             const busyMsg = busyLabel(row);
+            const permanentKeyReady =
+              row.dynamicUrl?.startsWith("ssconf://") && !row.orphaned;
 
             return (
               <div
@@ -436,14 +444,20 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                         {busyMsg}
                       </p>
                     )}
+                    {row.orphaned && !busyMsg && (
+                      <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-destructive">
+                        <AlertTriangle className="h-3 w-3" />
+                        Disable, then enable this customer to recreate the missing key.
+                      </p>
+                    )}
                   </div>
 
                   <Button
                     size="sm"
                     onClick={() => void copyKey(row)}
-                    disabled={!row.dynamicUrl?.startsWith("ssconf://")}
+                    disabled={!permanentKeyReady}
                     className="min-h-10 shrink-0 px-4"
-                    aria-label={`${row.dynamicUrl?.startsWith("ssconf://") ? "Copy permanent key for" : "Permanent key not ready for"} ${row.name}`}
+                    aria-label={`${permanentKeyReady ? "Copy permanent key for" : "Permanent key not ready for"} ${row.name}`}
                   >
                     {copied === row.token ? (
                       <Check className="mr-1.5 h-4 w-4" />
@@ -451,7 +465,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                       <Copy className="mr-1.5 h-4 w-4" />
                     )}
                     <span>
-                      {row.dynamicUrl?.startsWith("ssconf://") ? "Copy Key" : "Not ready"}
+                      {permanentKeyReady ? "Copy Key" : "Not ready"}
                     </span>
                   </Button>
                 </div>
@@ -509,7 +523,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={Boolean(busy) || row.status !== "active" || row.cleanupPending}
+                    disabled={Boolean(busy) || row.status !== "active" || row.cleanupPending || row.orphaned}
                     className="min-h-11"
                     onClick={() => setResetUsageFor(row)}
                   >
@@ -607,7 +621,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     variant="outline"
                     size="sm"
                     className="min-h-11"
-                    disabled={Boolean(busy) || row.status !== "active"}
+                    disabled={Boolean(busy) || row.status !== "active" || row.orphaned}
                     onClick={() => setMigrateFor(row)}
                   >
                     <ArrowRightLeft className="mr-1.5 h-3.5 w-3.5" />

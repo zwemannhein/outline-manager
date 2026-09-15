@@ -6,11 +6,12 @@ import userEvent from "@testing-library/user-event";
 const mocks = vi.hoisted(() => ({
   fetchDynamicCustomers: vi.fn(),
   resetCustomerUsage: vi.fn(),
+  disableCustomer: vi.fn(),
 }));
 
 vi.mock("@/lib/sync", () => ({
   ...mocks,
-  disableCustomer: vi.fn(),
+  disableCustomer: mocks.disableCustomer,
   enableCustomer: vi.fn(),
   migrateCustomer: vi.fn(),
   cleanupCustomerMigration: vi.fn(),
@@ -55,6 +56,7 @@ beforeEach(() => {
       syncState: "synced",
       suspendedState: null,
       cleanupPending: false,
+      orphaned: false,
     }],
     health: {
       kvWritesUsedToday: 0,
@@ -71,6 +73,7 @@ beforeEach(() => {
     usedBytes: 0,
     urlChanged: false,
   });
+  mocks.disableCustomer.mockResolvedValue({ ok: true, status: "disabled", syncPending: false });
 });
 
 afterEach(() => cleanup());
@@ -100,5 +103,20 @@ describe("customer usage reset UI", () => {
 
     await waitFor(() => expect(mocks.resetCustomerUsage).toHaveBeenCalledWith(TOKEN));
     await waitFor(() => expect(screen.getByText("0 B / 100 GB")).toBeInTheDocument());
+  });
+
+  it("surfaces a missing key and keeps the recovery disable action available", async () => {
+    const payload = await mocks.fetchDynamicCustomers();
+    payload.customers[0].orphaned = true;
+    mocks.fetchDynamicCustomers.mockResolvedValue(payload);
+
+    render(<CustomersPanel servers={[{ id: "srv-a", name: "Server A" }]} />);
+
+    expect(await screen.findByText("Missing key")).toBeInTheDocument();
+    expect(screen.getByText(/disable, then enable this customer/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^disable$/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /reset usage/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /migrate/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /permanent key not ready/i })).toBeDisabled();
   });
 });

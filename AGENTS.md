@@ -97,6 +97,9 @@ The admin dashboard allows a single administrator to:
 ### Disable/Enable
 
 - Disable: sets Outline data limit to 0 (default strategy) or deletes the key (remove strategy), marks identity `disabled`, bumps `rev` so edge cache invalidates.
+- If Outline returns 404 because the key is already missing, Disable must treat
+  the traffic gate as already closed, preserve current-period usage, and still
+  close the dynamic config gate. Do not leave the identity falsely `active`.
 - Enable: restores remaining quota (not full allowance), re-creates key if it was removed.
 - Disabled/expired customers must return 404 from `/k/`.
 

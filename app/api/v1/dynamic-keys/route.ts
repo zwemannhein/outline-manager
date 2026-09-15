@@ -25,7 +25,7 @@ import {
 } from "@/lib/dynamic-keys";
 import { readAllKeyMeta, metaField, computeQuotaUsage, describeQuota } from "@/lib/key-meta";
 import { getSyncState, getWriteBudget, countDirtyTokens } from "@/lib/kv-sync";
-import { listRegisteredServers, getTransferMetrics } from "@/lib/outline-admin";
+import { listRegisteredServers, getTransferMetrics, listAccessKeys } from "@/lib/outline-admin";
 import { createLogger } from "@/lib/logger";
 
 const logger = createLogger("dynamic-keys-api");
@@ -45,16 +45,29 @@ export async function GET(req: NextRequest) {
 
     const serverNames = new Map(servers.map((s) => [s.id, s.name]));
 
-    // Fetch each server's metrics ONCE rather than per key.
+    // Fetch each server's metrics and key inventory ONCE rather than per key.
+    // A null key set means the inventory was unreadable, not that every key is
+    // missing; only a successful inventory can authoritatively mark an orphan.
     const usageByServer = new Map<string, Record<string, number>>();
-    for (const server of servers) {
-      try {
-        const metrics = await getTransferMetrics(server.id);
-        usageByServer.set(server.id, metrics.bytesTransferredByUserId ?? {});
-      } catch {
-        // An unreachable server must not break the whole listing.
-        usageByServer.set(server.id, {});
-      }
+    const keyIdsByServer = new Map<string, Set<string> | null>();
+    const snapshots = await Promise.all(
+      servers.map(async (server) => {
+        const [metrics, keys] = await Promise.allSettled([
+          getTransferMetrics(server.id),
+          listAccessKeys(server.id),
+        ]);
+        return { server, metrics, keys };
+      })
+    );
+    for (const { server, metrics, keys } of snapshots) {
+      usageByServer.set(
+        server.id,
+        metrics.status === "fulfilled" ? metrics.value.bytesTransferredByUserId ?? {} : {}
+      );
+      keyIdsByServer.set(
+        server.id,
+        keys.status === "fulfilled" ? new Set(keys.value.map((key) => key.id)) : null
+      );
     }
 
     const rows = await Promise.all(
@@ -65,6 +78,7 @@ export async function GET(req: NextRequest) {
           const liveBytes = usageByServer.get(record.serverId)?.[record.outlineKeyId] ?? 0;
           const usage = meta ? computeQuotaUsage(meta, liveBytes) : null;
           const syncState = await getSyncState(record);
+          const serverKeyIds = keyIdsByServer.get(record.serverId) ?? null;
 
           return {
             token: record.token,
@@ -101,7 +115,7 @@ export async function GET(req: NextRequest) {
             suspendedState: record.suspendedState,
             cleanupPending: pendingCleanupEntries(record).length > 0,
             // Surfaces keys deleted out of band in the official Outline app.
-            orphaned: !usageByServer.has(record.serverId),
+            orphaned: serverKeyIds !== null && !serverKeyIds.has(record.outlineKeyId),
           };
         })
     );

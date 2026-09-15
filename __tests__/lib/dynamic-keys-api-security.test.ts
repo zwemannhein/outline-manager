@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const RAW_URL = "ss://raw-credential@vpn.example:1234";
+const outlineMocks = vi.hoisted(() => ({
+  listAccessKeys: vi.fn(async () => [{ id: "key-1" }]),
+}));
 
 vi.mock("@/lib/api-utils", () => ({
   checkAuth: vi.fn(async () => ({ authenticated: true, username: "admin" })),
@@ -49,11 +52,16 @@ vi.mock("@/lib/kv-sync", () => ({
 vi.mock("@/lib/outline-admin", () => ({
   listRegisteredServers: vi.fn(async () => [{ id: "server-1", name: "Server" }]),
   getTransferMetrics: vi.fn(async () => ({ bytesTransferredByUserId: { "key-1": 0 } })),
+  listAccessKeys: outlineMocks.listAccessKeys,
 }));
 
 import { GET } from "@/app/api/v1/dynamic-keys/route";
 
 describe("dynamic customer API raw-key protection", () => {
+  beforeEach(() => {
+    outlineMocks.listAccessKeys.mockResolvedValue([{ id: "key-1" }]);
+  });
+
   it("does not expose raw ss:// credentials through the former includeRaw query", async () => {
     const request = new NextRequest(
       "https://outline-manager.vercel.app/api/v1/dynamic-keys?includeRaw=true"
@@ -68,5 +76,16 @@ describe("dynamic customer API raw-key protection", () => {
     );
     expect(JSON.stringify(payload)).not.toContain(RAW_URL);
     expect(JSON.stringify(payload)).not.toContain("ss://raw-credential");
+  });
+
+  it("marks an active Redis identity as orphaned when server inventory lacks its key", async () => {
+    outlineMocks.listAccessKeys.mockResolvedValue([]);
+    const request = new NextRequest("https://outline-manager.vercel.app/api/v1/dynamic-keys");
+    const response = await GET(request);
+    const payload = await response.json() as { customers: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(payload.customers[0].status).toBe("active");
+    expect(payload.customers[0].orphaned).toBe(true);
   });
 });

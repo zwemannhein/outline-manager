@@ -39,7 +39,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (27 files, 461 tests) |
+| Vitest | ^2.1.8 | Test runner (27 files, 464 tests) |
 
 ---
 
@@ -138,7 +138,7 @@ outline-manager/
 │   │   └── cron.ts     ← Cloudflare scheduled Worker: calls /api/v1/cron/tick hourly
 │   └── wrangler.toml   ← Worker config; workers_dev = true
 │
-├── __tests__/           ← 27 standard test files, 461 tests (Vitest + jsdom)
+├── __tests__/           ← 27 standard test files, 464 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -451,6 +451,13 @@ If quota is raised mid-period, customer gets the difference credited. If lowered
 
 Disabled/expired customers return **404** from `/k/`, not their config.
 
+If the Outline key was deleted out of band, the customer list marks it **Missing
+key** from the server key inventory. Manual Disable treats Outline 404 as an
+already-closed traffic gate, preserves usage as migration debt, closes the
+dynamic config gate, and allows a subsequent Enable to recreate the key with
+only the remaining allowance. Reset, Migrate, and Copy Key are disabled while
+the record is orphaned.
+
 ---
 
 ## K. MIGRATION
@@ -669,7 +676,7 @@ Verified by the 2026-08-31 source reconciliation pass.
 
 ```
 npm run type-check  → PASS (0 errors)
-npm run test        → PASS (27 files, 461 tests)
+npm run test        → PASS (27 files, 464 tests)
 npm run build       → PASS
 ```
 
@@ -829,5 +836,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (27 files, ≥461 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (27 files, ≥464 tests)
 - [ ] **Build passes** — `npm run build` exits 0

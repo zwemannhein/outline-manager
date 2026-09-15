@@ -401,6 +401,8 @@ export interface DynamicCustomerRow {
   syncState: "synced" | "pending" | "unknown" | "not_configured";
   suspendedState: { previousLimitBytes: number | null; reason: string } | null;
   cleanupPending: boolean;
+  /** True when Redis points to a key absent from a successfully-read server inventory. */
+  orphaned: boolean;
 }
 
 export interface DynamicHealth {

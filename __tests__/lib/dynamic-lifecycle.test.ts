@@ -202,6 +202,34 @@ describe("disable closes both gates", () => {
     // The safe direction: enforcement happened even though the edge is stale.
     expect(fakeOutline.passesTraffic(SRV, keyId)).toBe(false);
   });
+
+  it("treats an already-missing key as blocked and preserves quota before recreation", async () => {
+    const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 80 });
+    const urlBefore = buildDynamicUrl(token, "Ko Aung");
+
+    // Simulate an out-of-band deletion while transfer metrics still retain the
+    // old key's cumulative usage, matching the production incident.
+    await fakeOutline.request(SRV, "DELETE", `/access-keys/${keyId}`);
+
+    const disabled = await disableIdentity({ token });
+    expect(disabled.ok).toBe(true);
+    const disabledRecord = (await readDynamicRecord(token))!;
+    expect(disabledRecord.status).toBe("disabled");
+    expect(disabledRecord.suspendedState?.keyRemoved).toBe(true);
+    expect((await readKeyMeta(SRV, keyId))?.carriedBytes).toBe(80 * GIB);
+
+    const enabled = await enableIdentity({ token });
+    expect(enabled.ok).toBe(true);
+    if (!enabled.ok) return;
+    expect(enabled.recreatedKey).toBe(true);
+    expect(enabled.outlineKeyId).not.toBe(keyId);
+    // A zero-usage replacement receives only the 20 GB that remained.
+    expect(fakeOutline.getKey(SRV, enabled.outlineKeyId)?.dataLimit?.bytes).toBe(20 * GIB);
+
+    const activeRecord = (await readDynamicRecord(token))!;
+    expect(activeRecord.token).toBe(token);
+    expect(buildDynamicUrl(activeRecord.token, activeRecord.name)).toBe(urlBefore);
+  });
 });
 
 describe("enable reopens both gates with the REMAINING quota", () => {

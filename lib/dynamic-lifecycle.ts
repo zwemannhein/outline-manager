@@ -73,6 +73,7 @@ import {
   deleteAccessKey,
   accessKeyExists,
   resolveServer,
+  isOutlineNotFound,
 } from "./outline-admin";
 import { putDynamicProjection, syncDynamicToken } from "./kv-sync";
 import type { DynamicKeyRecord, KeyMeta, SuspendedState } from "./types";
@@ -148,7 +149,7 @@ export async function disableIdentity(
     previousLimitBytes = meta?.quotaBytes ?? null;
   }
 
-  const suspendedState: SuspendedState = {
+  let suspendedState: SuspendedState = {
     previousLimitBytes,
     suspendedAt: new Date().toISOString(),
     reason,
@@ -163,6 +164,7 @@ export async function disableIdentity(
   });
 
   // 3. Close the Outline gate.
+  let usageCarriedToMetadata = false;
   try {
     if (strategy === "remove") {
       // Convert this key's current-period usage into migration debt before its
@@ -175,21 +177,55 @@ export async function disableIdentity(
           carriedBytes: usage.totalUsedBytes,
           usageBaselineBytes: 0,
         });
+        usageCarriedToMetadata = true;
       }
       await deleteAccessKey(record.serverId, record.outlineKeyId);
     } else {
       await applyDataLimit(record.serverId, record.outlineKeyId, getDisableBlockBytes());
     }
   } catch (err) {
-    logger.error(
-      { dyn: maskId(record.token), strategy },
-      "Failed to close the Outline gate during disable"
-    );
-    return {
-      ok: false,
-      code: "OUTLINE_FAILED",
-      message: "Could not block access on the Outline server. Nothing was changed.",
-    };
+    // A missing key is already blocked at the real enforcement gate. Continue
+    // closing the config gate and preserve its last reported usage so a later
+    // recreation cannot accidentally mint a fresh allowance.
+    if (isOutlineNotFound(err)) {
+      const meta = await readKeyMeta(record.serverId, record.outlineKeyId);
+      if (meta && !usageCarriedToMetadata) {
+        let totalUsed = meta.quotaBytes ?? Math.max(0, meta.carriedBytes ?? 0);
+        try {
+          const rawBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId);
+          totalUsed = computeQuotaUsage(meta, rawBytes).totalUsedBytes;
+        } catch {
+          logger.warn(
+            { dyn: maskId(record.token) },
+            "Missing key usage unreadable; preserving finite quota as exhausted"
+          );
+        }
+        await patchKeyMeta(record.serverId, record.outlineKeyId, {
+          carriedBytes: totalUsed,
+          usageBaselineBytes: 0,
+        });
+      }
+
+      suspendedState = { ...suspendedState, keyRemoved: true };
+      await redis.hset(`dynamic:${record.token}`, {
+        suspendedState: JSON.stringify(suspendedState),
+        updatedAt: new Date().toISOString(),
+      });
+      logger.warn(
+        { dyn: maskId(record.token), strategy },
+        "Outline key already missing; continuing disable at the config gate"
+      );
+    } else {
+      logger.error(
+        { dyn: maskId(record.token), strategy },
+        "Failed to close the Outline gate during disable"
+      );
+      return {
+        ok: false,
+        code: "OUTLINE_FAILED",
+        message: "Could not confirm the block on the Outline server. Customer status was not changed.",
+      };
+    }
   }
 
   // 4. Authoritative status.
