@@ -456,7 +456,9 @@ key** from the server key inventory. Manual Disable treats Outline 404 as an
 already-closed traffic gate, preserves usage as migration debt, closes the
 dynamic config gate, and allows a subsequent Enable to recreate the key with
 only the remaining allowance. Reset, Migrate, and Copy Key are disabled while
-the record is orphaned.
+the record is orphaned. Inventory IDs are normalized to strings before comparison
+because Outline 1.12.x may return numeric-looking IDs as JSON numbers while Redis
+stores the same IDs as strings.
 
 ---
 

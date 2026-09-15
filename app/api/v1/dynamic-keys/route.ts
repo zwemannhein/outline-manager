@@ -66,7 +66,9 @@ export async function GET(req: NextRequest) {
       );
       keyIdsByServer.set(
         server.id,
-        keys.status === "fulfilled" ? new Set(keys.value.map((key) => key.id)) : null
+        // Outline 1.12.x can serialize numeric-looking IDs as numbers even
+        // though our persisted identity schema stores them as strings.
+        keys.status === "fulfilled" ? new Set(keys.value.map((key) => String(key.id))) : null
       );
     }
 
@@ -115,7 +117,7 @@ export async function GET(req: NextRequest) {
             suspendedState: record.suspendedState,
             cleanupPending: pendingCleanupEntries(record).length > 0,
             // Surfaces keys deleted out of band in the official Outline app.
-            orphaned: serverKeyIds !== null && !serverKeyIds.has(record.outlineKeyId),
+            orphaned: serverKeyIds !== null && !serverKeyIds.has(String(record.outlineKeyId)),
           };
         })
     );

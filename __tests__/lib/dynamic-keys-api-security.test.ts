@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 
 const RAW_URL = "ss://raw-credential@vpn.example:1234";
 const outlineMocks = vi.hoisted(() => ({
-  listAccessKeys: vi.fn(async () => [{ id: "key-1" }]),
+  listAccessKeys: vi.fn(async () => [{ id: 28 as unknown as string }]),
 }));
 
 vi.mock("@/lib/api-utils", () => ({
@@ -21,7 +21,7 @@ vi.mock("@/lib/dynamic-keys", () => ({
     name: "Customer",
     orderId: null,
     serverId: "server-1",
-    outlineKeyId: "key-1",
+    outlineKeyId: "28",
     accessUrl: RAW_URL,
     status: "active",
     rev: 1,
@@ -51,7 +51,7 @@ vi.mock("@/lib/kv-sync", () => ({
 
 vi.mock("@/lib/outline-admin", () => ({
   listRegisteredServers: vi.fn(async () => [{ id: "server-1", name: "Server" }]),
-  getTransferMetrics: vi.fn(async () => ({ bytesTransferredByUserId: { "key-1": 0 } })),
+  getTransferMetrics: vi.fn(async () => ({ bytesTransferredByUserId: { "28": 0 } })),
   listAccessKeys: outlineMocks.listAccessKeys,
 }));
 
@@ -59,7 +59,7 @@ import { GET } from "@/app/api/v1/dynamic-keys/route";
 
 describe("dynamic customer API raw-key protection", () => {
   beforeEach(() => {
-    outlineMocks.listAccessKeys.mockResolvedValue([{ id: "key-1" }]);
+    outlineMocks.listAccessKeys.mockResolvedValue([{ id: 28 as unknown as string }]);
   });
 
   it("does not expose raw ss:// credentials through the former includeRaw query", async () => {
@@ -87,5 +87,15 @@ describe("dynamic customer API raw-key protection", () => {
     expect(response.status).toBe(200);
     expect(payload.customers[0].status).toBe("active");
     expect(payload.customers[0].orphaned).toBe(true);
+  });
+
+  it("matches numeric Outline IDs to string Redis IDs without a false orphan", async () => {
+    const request = new NextRequest("https://outline-manager.vercel.app/api/v1/dynamic-keys");
+    const response = await GET(request);
+    const payload = await response.json() as { customers: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(payload.customers[0].outlineKeyId).toBe("28");
+    expect(payload.customers[0].orphaned).toBe(false);
   });
 });
