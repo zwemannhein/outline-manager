@@ -39,7 +39,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (27 files, 464 tests) |
+| Vitest | ^2.1.8 | Test runner (34 files, 498 tests) |
 
 ---
 
@@ -87,7 +87,7 @@ outline-manager/
 │       └── (legacy v0 routes under app/api/ — kept for compatibility)
 │
 ├── components/admin/
-│   ├── AdminView.tsx          ← Root admin shell, tabs: Servers/Customers/Orders/Monitoring/Settings
+│   ├── AdminView.tsx          ← Root admin shell, tabs: Customers/Orders/Monitoring/Settings
 │   ├── CustomersPanel.tsx     ← Customer list with search, Reset Usage, Diagnose, Delete
 │   ├── CustomerDialogs.tsx    ← MigrateServer, EditSubscription, AddCustomer dialogs
 │   ├── DeleteCustomerDialog.tsx ← Confirmation dialog for deletion
@@ -136,9 +136,10 @@ outline-manager/
 │   ├── src/
 │   │   ├── index.ts    ← Cloudflare Worker: /k/<token> resolver (reads CF KV, returns JSON)
 │   │   └── cron.ts     ← Cloudflare scheduled Worker: calls /api/v1/cron/tick hourly
-│   └── wrangler.toml   ← Worker config; workers_dev = true
+│   ├── wrangler.toml       ← Public config Worker; workers_dev = true
+│   └── wrangler.cron.toml  ← Private hourly trigger Worker; workers_dev = false
 │
-├── __tests__/           ← 27 standard test files, 464 tests (Vitest + jsdom)
+├── __tests__/           ← 34 standard test files, 498 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -483,7 +484,7 @@ back to that server.
 4. Old key remains until admin runs `migrateCleanup` (Delete old key). `cleanupPending=true` until then.
 5. `carriedBytes` is set to current usage so destination quota reflects consumption.
 
-**Production status**: Only one physical Outline server is currently deployed. Real two-server migration has not been validated end-to-end in production. Unit tests cover the logic.
+**Production status**: Multiple physical Outline servers are currently configured. Real cross-server migration has not been validated end-to-end in production. Unit tests cover the logic.
 
 ---
 
@@ -702,24 +703,32 @@ Vercel also runs the production build during deployment.
 
 ## Q. CURRENT PRODUCTION STATUS
 
-Verified during the server-UI + hourly-cron deployment (commit `2caed8b`).
+Verified after the monitoring-correctness production follow-up (commit `0ba6505`).
 
 ```
 npm run type-check          → PASS (0 errors)
-npm run test                → PASS (31 files, 491 tests)
+npm run test                → PASS (34 files, 498 tests)
 npm run build               → PASS
 cd worker && npm run type-check → PASS
 ```
 
 ### This deployment (server UI + hourly cron)
 
-- **Cloudflare `outline-cron`**: DEPLOYED. Version `8e6e2f07-fc48-417a-afce-fa72ac849695`, schedule `0 * * * *` (hourly). Config: `worker/wrangler.cron.toml`. ROLLOVER_URL = `https://outline-manager.vercel.app/api/v1/cron/tick`.
-- **Vercel production**: deployed and aliased to `outline-manager.vercel.app` (deployment `outline-manager-pqovcnwar`, plus a follow-up redeploy after the CRON_SECRET rotation).
+- **Cloudflare `outline-cron`**: DEPLOYED. Active deployment version `80474762-21cb-427b-ae4e-da0e7f62ed07`, schedule `0 * * * *` (hourly). Config: `worker/wrangler.cron.toml`. ROLLOVER_URL = `https://outline-manager.vercel.app/api/v1/cron/tick`.
+- **Vercel production**: commit `0ba6505` deployed and aliased to `outline-manager.vercel.app` (deployment `outline-manager-2l0nytb7a`).
 - **CRON_SECRET**: rotated to a single fresh value set on BOTH Cloudflare (`wrangler secret put`, stdin) and Vercel production (`vercel env add`, stdin). Value never printed, never written to a temp file, cleared from memory after use. `vercel env pull` was not used.
 - **Authorized manual tick**: `POST /api/v1/cron/tick` → HTTP 200, result `expiry{due:2,expired:1,skipped:1,failed:0} rollover{rolled:0,failed:0} drain{synced:0,failed:0}`. The fresh run had ZERO failures; the previously reported single failure was transient and cleared.
 - **Cron monitoring fields added**: `expiryFailed`, `quotaFailed`, `dirtySyncFailed`, `source` (cloudflare/vercel/manual/unknown) on `monitor:cron:last`.
 - **Live checks**: homepage `200`, `/api/v1/health` `200` (redis healthy), unknown `/k/<32-hex>` `404` with empty body, malformed `/k/` `404`. No new 5xx observed.
-- **Monitoring thresholds unchanged**: 90 min → Warning, 6 h → Critical. Health returns to Healthy now that a fresh hourly tick is recorded.
+- **Monitoring thresholds unchanged**: 90 min → Warning, 6 h → Critical. The system summary and Cron card are Healthy with fresh hourly ticks.
+
+### Monitoring correctness follow-up (`0ba6505`)
+
+- Outline 1.12.x numeric-looking access-key IDs are normalized to strings before comparison with Redis identities. This removed the false condition where every managed customer appeared to have a missing key.
+- Server Details and Outline Monitoring now distinguish unavailable customer records from a successful empty result; managed/missing/unmanaged counts are hidden instead of fabricated when Redis customer data cannot be read.
+- Dynamic Config monitoring probes the canonical public origin rather than protected deployment-specific `VERCEL_URL`; production now receives the expected unknown-token HTTP 404 and reports Healthy.
+- Cron source attribution requires a successfully validated Vercel signature before labelling a request `vercel`; an invalid source header cannot override valid bearer-channel attribution.
+- Live verification after deployment: system summary Healthy, Dynamic Config Healthy (`404`), Cron Healthy, two servers with zero missing managed keys, and one server with one genuine missing key already surfaced by customer recovery diagnostics. No customer token, Outline key, quota, expiry, or `/k/` JSON behavior changed.
 
 ### Implemented Features
 
@@ -877,5 +886,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (27 files, ≥464 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (34 files, ≥498 tests)
 - [ ] **Build passes** — `npm run build` exits 0

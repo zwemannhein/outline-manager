@@ -129,7 +129,7 @@ Additional rules:
 - Carries current-period usage bytes to the destination so quota is not reset.
 - Do not delete the source key before edge sync of the destination is confirmed.
 - `cleanupPending = true` after migration until the old key is explicitly cleaned up.
-- Note: only one physical Outline server is currently configured in production. Real multi-server migration has not been validated end-to-end in production.
+- Multiple physical Outline servers are configured in production. Real multi-server migration has not been validated end-to-end in production.
 
 ---
 
