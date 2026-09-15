@@ -715,7 +715,7 @@ cd worker && npm run type-check → PASS
 ### This deployment (server UI + hourly cron)
 
 - **Cloudflare `outline-cron`**: DEPLOYED. Active deployment version `80474762-21cb-427b-ae4e-da0e7f62ed07`, schedule `0 * * * *` (hourly). Config: `worker/wrangler.cron.toml`. ROLLOVER_URL = `https://outline-manager.vercel.app/api/v1/cron/tick`.
-- **Vercel production**: commit `0ba6505` deployed and aliased to `outline-manager.vercel.app` (deployment `outline-manager-2l0nytb7a`).
+- **Vercel production**: implementation commit `0ba6505` (plus documentation-only follow-ups) is deployed and aliased to `outline-manager.vercel.app`. Use `vercel inspect outline-manager.vercel.app` for the current immutable deployment ID.
 - **CRON_SECRET**: rotated to a single fresh value set on BOTH Cloudflare (`wrangler secret put`, stdin) and Vercel production (`vercel env add`, stdin). Value never printed, never written to a temp file, cleared from memory after use. `vercel env pull` was not used.
 - **Authorized manual tick**: `POST /api/v1/cron/tick` → HTTP 200, result `expiry{due:2,expired:1,skipped:1,failed:0} rollover{rolled:0,failed:0} drain{synced:0,failed:0}`. The fresh run had ZERO failures; the previously reported single failure was transient and cleared.
 - **Cron monitoring fields added**: `expiryFailed`, `quotaFailed`, `dirtySyncFailed`, `source` (cloudflare/vercel/manual/unknown) on `monitor:cron:last`.
