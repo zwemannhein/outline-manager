@@ -38,7 +38,6 @@ type AdminTab = "servers" | "customers" | "orders" | "settings" | "monitoring";
 const SERVER_SIDEBAR_PREFERENCE_KEY = "outline_admin_server_sidebar_open";
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
-  { id: "servers",    label: "Servers",    icon: <Server      className="w-4 h-4" /> },
   { id: "customers",  label: "Customers",  icon: <Users       className="w-4 h-4" /> },
   { id: "orders",     label: "Orders",     icon: <ShoppingBag className="w-4 h-4" /> },
   { id: "monitoring", label: "Monitoring", icon: <Activity    className="w-4 h-4" /> },
@@ -199,7 +198,11 @@ export function AdminView({ onLogout }: AdminViewProps) {
           activeId={activeId}
           onlineIds={onlineIds}
           loading={syncing}
-          onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
+          onSelect={(id) => {
+            setActiveId(id);
+            setActiveTab("servers");
+            setSidebarOpen(false);
+          }}
           onAdd={() => setShowAddDialog(true)}
           onRemove={handleRemoveServer}
           onRename={handleRenameServer}

@@ -465,6 +465,11 @@ Expired first, then Quota exhausted, and only then Missing key for an otherwise
 active usable subscription. Concurrent Outline recovery needs remain a secondary
 hint rather than replacing the primary status.
 
+The top navigation intentionally omits a duplicate Servers item. Server dashboards
+and access-key management remain available by selecting a server in the persistent
+left sidebar (or the mobile server drawer); selecting one switches the main view
+back to that server.
+
 ---
 
 ## K. MIGRATION
