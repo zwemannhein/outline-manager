@@ -50,12 +50,14 @@ import {
   scheduleExpiryDue,
   clearCycleDue,
   clearExpiryDue,
+  pendingCleanupEntries,
 } from "./dynamic-keys";
 import {
   readKeyMeta,
   patchKeyMeta,
   copyKeyMeta,
   computeQuotaUsage,
+  computeOutlineLimit,
   extendCycles,
   cycleDueAt,
   expiryAt,
@@ -163,6 +165,17 @@ export async function disableIdentity(
   // 3. Close the Outline gate.
   try {
     if (strategy === "remove") {
+      // Convert this key's current-period usage into migration debt before its
+      // cumulative counter disappears. A replacement key will start at zero.
+      const meta = await readKeyMeta(record.serverId, record.outlineKeyId);
+      if (meta) {
+        const rawBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId);
+        const usage = computeQuotaUsage(meta, rawBytes);
+        await patchKeyMeta(record.serverId, record.outlineKeyId, {
+          carriedBytes: usage.totalUsedBytes,
+          usageBaselineBytes: 0,
+        });
+      }
       await deleteAccessKey(record.serverId, record.outlineKeyId);
     } else {
       await applyDataLimit(record.serverId, record.outlineKeyId, getDisableBlockBytes());
@@ -361,13 +374,7 @@ async function computeRestoreLimit(
 ): Promise<number | null> {
   if (meta) {
     if (meta.quotaBytes === null || meta.quotaBytes === undefined) return null; // unlimited
-
-    // Usage on the current key may be unreadable if it was removed.
-    const currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId).catch(
-      () => 0
-    );
-    const usage = computeQuotaUsage(meta, currentBytes);
-    return usage.remainingBytes ?? 0;
+    return computeOutlineLimit(meta);
   }
 
   const previous = record.suspendedState?.previousLimitBytes;
@@ -433,6 +440,64 @@ export async function renewIdentity(
   };
 }
 
+// ── Manual cycle reset ──────────────────────────────────────────────────────
+
+/** Start a fresh 30-day usage period without changing identity or expiry. */
+export async function resetUsageCycle(
+  token: string
+): Promise<LifecycleResult<{ quotaBytes: number | null; periodStart: string; usedBytes: 0 }>> {
+  const record = await readDynamicRecord(token);
+  if (!record) return { ok: false, code: "NOT_FOUND", message: "Customer identity not found." };
+  if (record.status !== "active") {
+    return { ok: false, code: "NOT_ACTIVE", message: "Only an active customer can be reset." };
+  }
+  if (pendingCleanupEntries(record).length > 0) {
+    return {
+      ok: false,
+      code: "MIGRATION_IN_PROGRESS",
+      message: "Finish migration cleanup before resetting usage.",
+    };
+  }
+
+  const meta = await readKeyMeta(record.serverId, record.outlineKeyId);
+  if (!meta) {
+    return { ok: false, code: "NO_METADATA", message: "No subscription metadata for this key." };
+  }
+
+  let currentBytes: number;
+  try {
+    currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId);
+  } catch {
+    return { ok: false, code: "OUTLINE_FAILED", message: "Could not read usage from Outline." };
+  }
+
+  const periodStart = new Date().toISOString();
+  const resetMeta: KeyMeta = {
+    ...meta,
+    periodStart,
+    carriedBytes: 0,
+    usageBaselineBytes: Math.max(0, currentBytes),
+  };
+
+  try {
+    await applyDataLimit(record.serverId, record.outlineKeyId, computeOutlineLimit(resetMeta));
+  } catch {
+    return { ok: false, code: "OUTLINE_FAILED", message: "Could not restore quota on Outline." };
+  }
+
+  await patchKeyMeta(record.serverId, record.outlineKeyId, resetMeta);
+  await scheduleCycleDue(token, Date.parse(periodStart) + 30 * 24 * 60 * 60 * 1000);
+
+  logger.info({ dyn: maskId(token) }, "Customer usage cycle reset");
+  return {
+    ok: true,
+    syncPending: false,
+    quotaBytes: resetMeta.quotaBytes ?? null,
+    periodStart,
+    usedBytes: 0,
+  };
+}
+
 // ── Quota change ──────────────────────────────────────────────────────────────
 
 /**
@@ -455,13 +520,11 @@ export async function updateQuota(
 
   const meta = (await readKeyMeta(record.serverId, record.outlineKeyId)) ?? null;
 
-  // Apply the remaining allowance under the new quota, so raising a limit
-  // mid-cycle credits the customer and lowering it accounts for usage so far.
+  // Outline limits are absolute cumulative caps. The cycle baseline converts
+  // the configured allowance into the correct cap without replacing the key.
   let appliedBytes: number | null = quotaBytes;
   if (quotaBytes !== null && meta) {
-    const currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId).catch(() => 0);
-    const usage = computeQuotaUsage({ ...meta, quotaBytes }, currentBytes);
-    appliedBytes = usage.remainingBytes ?? 0;
+    appliedBytes = computeOutlineLimit({ ...meta, quotaBytes });
   }
 
   // Only touch Outline while the customer is active; a suspended key must stay
@@ -521,9 +584,7 @@ export async function editSubscription(
   // ── Quota change (same logic as updateQuota) ──────────────────────────────
   let appliedBytes: number | null = quotaBytes;
   if (quotaBytes !== null && meta) {
-    const currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId).catch(() => 0);
-    const usage = computeQuotaUsage({ ...meta, quotaBytes }, currentBytes);
-    appliedBytes = usage.remainingBytes ?? 0;
+    appliedBytes = computeOutlineLimit({ ...meta, quotaBytes });
   }
 
   if (record.status === "active") {

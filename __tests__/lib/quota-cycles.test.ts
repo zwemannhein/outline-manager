@@ -121,12 +121,13 @@ describe("cycle rollover restores the monthly quota", () => {
     const report = await processCycleRollovers(Date.now());
     expect(report.rolled).toBe(1);
 
-    // The Outline limit is back to the full monthly quota.
-    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(100 * GIB);
+    // Absolute cap: 90 GB already counted plus a fresh 100 GB allowance.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(190 * GIB);
 
     const meta = await readKeyMeta(SRV, keyId);
     expect(meta?.cyclesUsed).toBe(2);
     expect(meta?.carriedBytes).toBe(0);
+    expect(meta?.usageBaselineBytes).toBe(90 * GIB);
   });
 
   it("advances the anchor by exactly 30 days from the PREVIOUS start", async () => {
@@ -170,8 +171,8 @@ describe("cycle rollover restores the monthly quota", () => {
 
     await processCycleRollovers(Date.now());
 
-    // Still 100, never 195.
-    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(100 * GIB);
+    // Absolute cap is 5 GB already counted plus the fresh 100 GB allowance.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(105 * GIB);
     expect((await readKeyMeta(SRV, keyId))!.quotaBytes).toBe(100 * GIB);
   });
 
@@ -221,7 +222,7 @@ describe("cycle rollover restores the monthly quota", () => {
 
     // Simulate the customer exhausting each cycle and the cron rolling it.
     for (let cycle = 2; cycle <= 6; cycle += 1) {
-      fakeOutline.setUsage(SRV, keyId, 100 * GIB);
+      fakeOutline.setUsage(SRV, keyId, (cycle - 1) * 100 * GIB);
       const meta = await readKeyMeta(SRV, keyId);
       const due = cycleDueAt(meta!)!;
 
@@ -230,8 +231,8 @@ describe("cycle rollover restores the monthly quota", () => {
 
       const after = await readKeyMeta(SRV, keyId);
       expect(after!.cyclesUsed).toBe(cycle);
-      // Every cycle restores the SAME monthly quota.
-      expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(100 * GIB);
+      // The cumulative cap advances by exactly one monthly allowance.
+      expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(cycle * 100 * GIB);
     }
 
     // After the 6th cycle no further rollover is granted.

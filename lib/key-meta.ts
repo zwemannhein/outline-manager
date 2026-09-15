@@ -16,13 +16,10 @@
  *
  *   100 GB x 6 months  =  100 GB every 30 days, for 6 cycles  (up to 600 GB)
  *
- * Unused quota never rolls over. This aligns with how Outline itself enforces
- * limits — `enforceAccessKeyDataLimits` compares usage over a rolling 30-day
- * window — so enforcement is native and we hold no cumulative counter.
- *
- * The load-bearing property: within any window of <= 30 days, Outline's rolling
- * window is arithmetically identical to "cumulative since cycle start", because
- * nothing has aged out yet. Cycle length is exactly 30 days, so that always holds.
+ * Outline's transfer counter and data limit are cumulative for an access key.
+ * `usageBaselineBytes` records the counter value at the start of the current
+ * cycle, allowing both the UI and the absolute Outline limit to represent a
+ * fresh allowance without replacing the key.
  */
 
 import { getRedis } from "./api-utils";
@@ -51,6 +48,7 @@ function emptyMeta(): KeyMeta {
     quotaBytes: null,
     periodStart: null,
     carriedBytes: 0,
+    usageBaselineBytes: 0,
     cyclesTotal: 1,
     cyclesUsed: 1,
     updatedAt: new Date().toISOString(),
@@ -164,6 +162,7 @@ export function buildInitialMeta(params: {
     quotaBytes: params.quotaBytes,
     periodStart: start.toISOString(),
     carriedBytes: 0,
+    usageBaselineBytes: 0,
     cyclesTotal: cycles,
     cyclesUsed: 1,
     expiryDate: new Date(start.getTime() + cycles * CYCLE_MS).toISOString(),
@@ -203,7 +202,7 @@ export function cyclesExhausted(meta: KeyMeta): boolean {
  * Deliberately NOT `periodStart = now`: the cron runs hourly and may be late, and
  * using `now` would let the cycle boundary drift forward on every rollover.
  */
-export function advanceCycle(meta: KeyMeta): KeyMeta {
+export function advanceCycle(meta: KeyMeta, currentKeyBytes = 0): KeyMeta {
   const prevStart = meta.periodStart ? Date.parse(meta.periodStart) : Date.now();
   const base = Number.isNaN(prevStart) ? Date.now() : prevStart;
 
@@ -212,6 +211,7 @@ export function advanceCycle(meta: KeyMeta): KeyMeta {
     periodStart: new Date(base + CYCLE_MS).toISOString(),
     // Migration debt is cleared: the new cycle starts with the full allowance.
     carriedBytes: 0,
+    usageBaselineBytes: Math.max(0, currentKeyBytes || 0),
     cyclesUsed: (meta.cyclesUsed ?? 1) + 1,
     updatedAt: new Date().toISOString(),
   };
@@ -245,7 +245,7 @@ export interface QuotaUsage {
   quotaBytes: number | null;
   /** Usage on previous keys during this cycle. */
   carriedBytes: number;
-  /** Usage reported by the current Outline key. */
+  /** Usage on the current Outline key since this cycle's baseline. */
   currentKeyBytes: number;
   /** carriedBytes + currentKeyBytes. */
   totalUsedBytes: number;
@@ -255,15 +255,12 @@ export interface QuotaUsage {
 }
 
 /**
- * Combine stored migration debt with live Outline usage.
- *
- * `currentKeyBytes` comes from Outline's `/metrics/transfer`, which reports a
- * rolling 30-day window. Within a 30-day cycle that equals cumulative usage for
- * the current key, so adding `carriedBytes` gives cycle-to-date consumption.
+ * Combine stored migration debt with live cumulative Outline usage.
  */
 export function computeQuotaUsage(meta: KeyMeta, currentKeyBytes: number): QuotaUsage {
   const carried = Math.max(0, meta.carriedBytes ?? 0);
-  const current = Math.max(0, currentKeyBytes || 0);
+  const baseline = Math.max(0, meta.usageBaselineBytes ?? 0);
+  const current = Math.max(0, (currentKeyBytes || 0) - baseline);
   const total = carried + current;
   const quota = meta.quotaBytes ?? null;
 
@@ -275,6 +272,14 @@ export function computeQuotaUsage(meta: KeyMeta, currentKeyBytes: number): Quota
     remainingBytes: quota === null ? null : Math.max(0, quota - total),
     exhausted: quota !== null && total >= quota,
   };
+}
+
+/** Absolute Outline limit that enforces the current cycle's remaining quota. */
+export function computeOutlineLimit(meta: KeyMeta): number | null {
+  if (meta.quotaBytes === null || meta.quotaBytes === undefined) return null;
+  const baseline = Math.max(0, meta.usageBaselineBytes ?? 0);
+  const carried = Math.max(0, meta.carriedBytes ?? 0);
+  return Math.max(0, baseline + meta.quotaBytes - carried);
 }
 
 /** Human-readable plan wording. Never describes a multi-cycle plan as one pool. */

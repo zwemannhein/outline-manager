@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { X, ArrowRightLeft, CalendarPlus, Gauge, AlertTriangle, Users } from "lucide-react";
+import { X, ArrowRightLeft, CalendarPlus, Gauge, AlertTriangle, Users, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -434,6 +434,52 @@ export function EditSubscriptionDialog({
             onClick={handleSave}
           >
             Save Changes
+          </Button>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+// ── Reset usage period ──────────────────────────────────────────────────────
+
+export function ResetUsageDialog({
+  customer,
+  onClose,
+  onConfirm,
+}: {
+  customer: DynamicCustomerRow | null;
+  onClose: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  if (!customer) return null;
+
+  return (
+    <Shell title="Reset data usage" icon={<RotateCcw className="h-5 w-5 text-white" />} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="rounded-xl border bg-muted/30 p-4 text-sm">
+          <p><span className="text-muted-foreground">Customer:</span> {customer.name}</p>
+          <p className="mt-1">
+            <span className="text-muted-foreground">Current usage:</span>{" "}
+            {formatBytes(customer.usedBytes)}
+          </p>
+        </div>
+
+        <div className="flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            This starts a new 30-day data period now and restores the full configured allowance.
+            The expiry date is not extended.
+          </p>
+        </div>
+
+        {KEY_UNCHANGED_NOTE}
+
+        <div className="flex gap-3">
+          <Button variant="outline" className="flex-1 min-h-11" onClick={onClose}>Cancel</Button>
+          <Button className="flex-1 min-h-11" onClick={() => void onConfirm()}>
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Reset Usage
           </Button>
         </div>
       </div>

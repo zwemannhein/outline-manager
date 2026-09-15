@@ -480,6 +480,16 @@ export function updateCustomerQuota(token: string, quotaGB: number | null) {
   });
 }
 
+export function resetCustomerUsage(token: string) {
+  return dynamicAction<{
+    ok: boolean;
+    quotaBytes: number | null;
+    periodStart: string;
+    usedBytes: number;
+    urlChanged: boolean;
+  }>({ action: "resetUsage", token });
+}
+
 export function migrateCustomer(
   token: string,
   destServerId: string,

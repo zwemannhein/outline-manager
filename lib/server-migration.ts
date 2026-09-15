@@ -154,8 +154,9 @@ export async function migrateToServer(options: MigrateOptions): Promise<MigrateR
   }
 
   const quotaBytes = meta?.quotaBytes ?? null;
-  const carriedBefore = Math.max(0, meta?.carriedBytes ?? 0);
-  const totalUsed = carriedBefore + Math.max(0, sourceUsage);
+  const totalUsed = meta
+    ? computeQuotaUsage(meta, sourceUsage).totalUsedBytes
+    : Math.max(0, sourceUsage);
 
   let appliedLimit: number | null = null;
   if (quotaBytes !== null) {
@@ -209,6 +210,8 @@ export async function migrateToServer(options: MigrateOptions): Promise<MigrateR
     }),
     // Accumulates across multiple migrations inside one cycle.
     carriedBytes: totalUsed,
+    // The destination key starts at zero cumulative bytes.
+    usageBaselineBytes: 0,
   };
   await writeKeyMeta(dest.id, destKeyId, nextMeta);
 

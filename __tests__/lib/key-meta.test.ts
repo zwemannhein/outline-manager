@@ -8,6 +8,7 @@ import {
   advanceCycle,
   extendCycles,
   computeQuotaUsage,
+  computeOutlineLimit,
   describeQuota,
   cycleDueAt,
   expiryAt,
@@ -213,6 +214,14 @@ describe("quota usage combines migration debt with live usage", () => {
   it("ignores negative or missing inputs", () => {
     const usage = computeQuotaUsage({ ...base, carriedBytes: -5 }, -10);
     expect(usage.totalUsedBytes).toBe(0);
+  });
+
+  it("subtracts a cycle baseline from the cumulative Outline counter", () => {
+    const meta = { ...base, usageBaselineBytes: 80 * GIB };
+    const usage = computeQuotaUsage(meta, 85 * GIB);
+    expect(usage.totalUsedBytes).toBe(5 * GIB);
+    expect(usage.remainingBytes).toBe(95 * GIB);
+    expect(computeOutlineLimit(meta)).toBe(180 * GIB);
   });
 });
 

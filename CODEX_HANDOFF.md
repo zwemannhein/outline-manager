@@ -39,7 +39,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (25 files, 452 tests) |
+| Vitest | ^2.1.8 | Test runner (27 files, 461 tests) |
 
 ---
 
@@ -88,7 +88,7 @@ outline-manager/
 │
 ├── components/admin/
 │   ├── AdminView.tsx          ← Root admin shell, tabs: Servers/Customers/Orders/Monitoring/Settings
-│   ├── CustomersPanel.tsx     ← Customer list with search, actions, Diagnose, Delete
+│   ├── CustomersPanel.tsx     ← Customer list with search, Reset Usage, Diagnose, Delete
 │   ├── CustomerDialogs.tsx    ← MigrateServer, EditSubscription, AddCustomer dialogs
 │   ├── DeleteCustomerDialog.tsx ← Confirmation dialog for deletion
 │   ├── DiagnoseDialog.tsx     ← Per-customer read-only diagnostic panel
@@ -108,7 +108,7 @@ outline-manager/
 │   ├── backfill.ts           ← Bulk-migrate existing Outline keys into managed identities
 │   ├── delete-customer.ts    ← Safe deletion: revoke → KV remove → Outline key delete
 │   ├── dynamic-keys.ts       ← Core identity CRUD, Redis key constants, Lua state machine
-│   ├── dynamic-lifecycle.ts  ← disable, enable, renew, updateQuota, editSubscription, migrate
+│   ├── dynamic-lifecycle.ts  ← disable, enable, resetUsage, renew, quota/subscription edits
 │   ├── dynamic-url.ts        ← Build/parse ssconf:// URLs, token validation
 │   ├── key-meta.ts           ← Per-key quota/cycle metadata: read, write, compute usage
 │   ├── kv-sync.ts            ← Cloudflare KV projection: put, delete, dirty queue, drain
@@ -138,7 +138,7 @@ outline-manager/
 │   │   └── cron.ts     ← Cloudflare scheduled Worker: calls /api/v1/cron/tick hourly
 │   └── wrangler.toml   ← Worker config; workers_dev = true
 │
-├── __tests__/           ← 25 standard test files, 452 tests (Vitest + jsdom)
+├── __tests__/           ← 27 standard test files, 461 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -185,7 +185,7 @@ Identity `status` values: `active` | `disabled` | `expired` | `revoked`
 
 | Key | Type | Purpose |
 |---|---|---|
-| `outline_key_meta` | HASH field=`<serverId>:<keyId>` | Per-key: quotaBytes, periodStart, carriedBytes, cyclesTotal, cyclesUsed, expiryDate, updatedAt |
+| `outline_key_meta` | HASH field=`<serverId>:<keyId>` | Per-key: quotaBytes, periodStart, carriedBytes, usageBaselineBytes, cyclesTotal, cyclesUsed, expiryDate, updatedAt |
 | `outline_admin_data` (legacy) | JSON string | Old browser-writable blob; migrated to outline_key_meta on read |
 
 ### Admin Auth
@@ -399,7 +399,19 @@ The 32-hex token (128 bits, cryptographically random) is generated once at ident
 - `periodStart` anchors the cycle to a fixed date.
 - Rollover advances by exactly `periodStart + 30 days` (not from `now`).
 - `carriedBytes` = usage on previous Outline keys in this period (for migration continuity).
+- `usageBaselineBytes` = cumulative current-key bytes already present when this period began.
+- Outline limits are absolute cumulative caps. For finite plans the cap is
+  `usageBaselineBytes + quotaBytes - carriedBytes` (clamped to zero).
 - Cycle rollover costs **zero** Cloudflare KV writes (only Outline limit + Redis metadata change).
+
+### Reset Usage
+
+Customers → **Reset Usage** starts a fresh 30-day period immediately. It records
+the live cumulative Outline counter as the new baseline, clears migration debt,
+and restores the full configured allowance. A confirmation dialog states that
+expiry is not extended. The action is active-customer only, refuses while
+migration cleanup is pending, and does not change the token, permanent URL,
+Outline key, expiry, cycles, rev, or Cloudflare projection.
 
 ### Unlimited
 
@@ -657,7 +669,7 @@ Verified by the 2026-08-31 source reconciliation pass.
 
 ```
 npm run type-check  → PASS (0 errors)
-npm run test        → PASS (25 files, 452 tests)
+npm run test        → PASS (27 files, 461 tests)
 npm run build       → PASS
 ```
 
@@ -676,6 +688,7 @@ npm run build       → PASS
 - Auto-disable on expiry (cron)
 - Disable / Enable
 - Edit Subscription (quota + expiry together)
+- Reset Usage (fresh 30-day allowance without changing expiry or permanent key)
 - Server migration (preserves token)
 - Delete Customer (safe, ordered, idempotent)
 - Permanent ssconf:// URL on Vercel (`/k/<token>` → JSON)
@@ -816,5 +829,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (25 files, ≥452 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (27 files, ≥461 tests)
 - [ ] **Build passes** — `npm run build` exits 0

@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   RefreshCw, Copy, Check, Ban, Play, ArrowRightLeft, Eye, EyeOff,
   Gauge, AlertTriangle, CloudOff, Trash2, Users, UserPlus, Stethoscope,
-  Search,
+  Search, RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,12 +31,13 @@ import {
   revealRawKey,
   resyncCustomer,
   editCustomerSubscription,
+  resetCustomerUsage,
   createAdminCustomer,
   deleteAdminCustomer,
   type DynamicCustomerRow,
   type DynamicHealth,
 } from "@/lib/sync";
-import { MigrateServerDialog, EditSubscriptionDialog, AddCustomerDialog } from "./CustomerDialogs";
+import { MigrateServerDialog, EditSubscriptionDialog, ResetUsageDialog, AddCustomerDialog } from "./CustomerDialogs";
 import { DiagnoseDialog } from "./DiagnoseDialog";
 import { DeleteCustomerDialog } from "./DeleteCustomerDialog";
 
@@ -144,6 +145,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
 
   const [migrateFor, setMigrateFor] = useState<DynamicCustomerRow | null>(null);
   const [editSubFor, setEditSubFor] = useState<DynamicCustomerRow | null>(null);
+  const [resetUsageFor, setResetUsageFor] = useState<DynamicCustomerRow | null>(null);
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [diagnoseFor, setDiagnoseFor] = useState<DynamicCustomerRow | null>(null);
   const [deleteFor, setDeleteFor] = useState<DynamicCustomerRow | null>(null);
@@ -288,6 +290,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
       enable: "Enabling…",
       migrate: "Migrating…",
       editSubscription: "Saving…",
+      resetUsage: "Resetting…",
       cleanup: "Cleaning up…",
       resync: "Syncing…",
     };
@@ -503,6 +506,16 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     <Gauge className="mr-1.5 h-3.5 w-3.5" />
                     Edit Subscription
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={Boolean(busy) || row.status !== "active" || row.cleanupPending}
+                    className="min-h-11"
+                    onClick={() => setResetUsageFor(row)}
+                  >
+                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                    Reset Usage
+                  </Button>
                   {row.status === "active" ? (
                     <Button
                       variant="outline"
@@ -668,6 +681,27 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
               quotaBytes: r.quotaBytes,
               expiryDate: r.expiryDate,
               status: r.disabledImmediately ? ("disabled" as const) : row.status,
+            })
+          );
+        }}
+      />
+
+      <ResetUsageDialog
+        customer={resetUsageFor}
+        onClose={() => setResetUsageFor(null)}
+        onConfirm={async () => {
+          const row = resetUsageFor!;
+          setResetUsageFor(null);
+          await run(
+            row,
+            "resetUsage",
+            () => resetCustomerUsage(row.token),
+            "Data usage reset",
+            (result) => ({
+              usedBytes: result.usedBytes,
+              remainingBytes: result.quotaBytes,
+              quotaExhausted: false,
+              periodStart: result.periodStart,
             })
           );
         }}

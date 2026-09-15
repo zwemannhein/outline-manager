@@ -10,6 +10,7 @@
  *   enable           reopen both, restoring the REMAINING current-cycle quota
  *   renew            extend cycles; same permanent URL
  *   updateQuota      change per-cycle quota; same permanent URL, zero KV writes
+ *   resetUsage       start a fresh 30-day usage period; identity unchanged
  *   migrate          move servers, preserving current-cycle consumption
  *   migrateCleanup   delete the superseded key, gated on edge sync
  *   revealRaw        return the raw ss:// URL for troubleshooting (audited)
@@ -46,6 +47,7 @@ import {
   renewIdentity,
   updateQuota,
   editSubscription,
+  resetUsageCycle,
 } from "@/lib/dynamic-lifecycle";
 import { migrateToServer, cleanupMigration } from "@/lib/server-migration";
 import { readDynamicRecord, buildDynamicUrl } from "@/lib/dynamic-keys";
@@ -66,6 +68,7 @@ const actionSchema = z.object({
     "renew",
     "updateQuota",
     "editSubscription",
+    "resetUsage",
     "migrate",
     "migrateCleanup",
     "revealRaw",
@@ -207,6 +210,22 @@ export async function POST(req: NextRequest) {
           expiryDate: result.expiryDate,
           disabledImmediately: result.disabledImmediately,
           syncPending: result.syncPending,
+          urlChanged: false,
+        });
+      }
+
+      // ── Reset current usage period ────────────────────────────────────────
+      case "resetUsage": {
+        const input = tokenOnlySchema.parse(body);
+        const result = await resetUsageCycle(input.token);
+        if (!result.ok) fail(result.code, result.message);
+
+        logger.info({ user: auth.username, dyn: maskId(input.token) }, "Usage cycle reset");
+        return successResponse({
+          ok: true,
+          quotaBytes: result.quotaBytes,
+          periodStart: result.periodStart,
+          usedBytes: result.usedBytes,
           urlChanged: false,
         });
       }

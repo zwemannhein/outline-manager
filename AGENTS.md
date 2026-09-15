@@ -73,6 +73,13 @@ The admin dashboard allows a single administrator to:
 - Quota resets every **30 days** from the period anchor.
 - Finite quota = X GB per 30-day cycle.
 - Multi-cycle plan = X GB per cycle for N cycles (not N×X GB pool).
+- Outline usage and limits are cumulative per access key. `usageBaselineBytes`
+  marks the current cycle's starting counter; the applied Outline cap is the
+  baseline plus the current-cycle allowance after migration debt.
+- **Reset Usage** starts a fresh 30-day period at the current cumulative counter.
+  It restores the configured allowance but must not change expiry, token,
+  permanent URL, Outline key, purchased cycles, status, or public projection.
+- Reset is allowed only for active customers and is blocked during migration cleanup.
 
 ### Expiry
 

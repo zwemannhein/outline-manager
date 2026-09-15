@@ -25,6 +25,7 @@ import {
   enableIdentity,
   renewIdentity,
   updateQuota,
+  resetUsageCycle,
   getDisableStrategy,
   getDisableBlockBytes,
 } from "@/lib/dynamic-lifecycle";
@@ -35,7 +36,14 @@ import {
   generateDynamicToken,
   getTokenByOutlineKey,
 } from "@/lib/dynamic-keys";
-import { writeKeyMeta, readKeyMeta, buildInitialMeta, CYCLE_MS, GIB } from "@/lib/key-meta";
+import {
+  writeKeyMeta,
+  readKeyMeta,
+  buildInitialMeta,
+  computeQuotaUsage,
+  CYCLE_MS,
+  GIB,
+} from "@/lib/key-meta";
 
 const SRV = "srv-a";
 
@@ -204,8 +212,8 @@ describe("enable reopens both gates with the REMAINING quota", () => {
     const result = await enableIdentity({ token });
     expect(result.ok).toBe(true);
 
-    // 20 GB remains, so toggling disable/enable cannot mint a new month of data.
-    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(20 * GIB);
+    // Absolute cap stays 100 GB, leaving 20 GB after cumulative usage of 80 GB.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(100 * GIB);
     expect((await readDynamicRecord(token))!.status).toBe("active");
   });
 
@@ -324,6 +332,41 @@ describe("renewal keeps the same URL and restores access", () => {
   });
 });
 
+describe("manual usage reset", () => {
+  it("starts a fresh period and restores the full allowance without changing identity", async () => {
+    const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 80 });
+    const recordBefore = (await readDynamicRecord(token))!;
+    const metaBefore = (await readKeyMeta(SRV, keyId))!;
+    const urlBefore = buildDynamicUrl(recordBefore.token, recordBefore.name);
+    kv.instance!.__state.writes = [];
+
+    const result = await resetUsageCycle(token);
+    expect(result.ok).toBe(true);
+
+    const recordAfter = (await readDynamicRecord(token))!;
+    const metaAfter = (await readKeyMeta(SRV, keyId))!;
+    expect(recordAfter.token).toBe(recordBefore.token);
+    expect(recordAfter.outlineKeyId).toBe(keyId);
+    expect(recordAfter.rev).toBe(recordBefore.rev);
+    expect(buildDynamicUrl(recordAfter.token, recordAfter.name)).toBe(urlBefore);
+    expect(kv.instance!.__state.writes).toHaveLength(0);
+    expect(metaAfter.expiryDate).toBe(metaBefore.expiryDate);
+    expect(metaAfter.usageBaselineBytes).toBe(80 * GIB);
+    expect(computeQuotaUsage(metaAfter, 80 * GIB).totalUsedBytes).toBe(0);
+    // 80 GB cumulative baseline + a fresh 100 GB allowance.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(180 * GIB);
+  });
+
+  it("does not reactivate a disabled customer", async () => {
+    const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 80 });
+    await disableIdentity({ token });
+
+    const result = await resetUsageCycle(token);
+    expect(result.ok).toBe(false);
+    expect(fakeOutline.passesTraffic(SRV, keyId)).toBe(false);
+  });
+});
+
 describe("quota change never touches the permanent URL", () => {
   it("updates the limit and metadata without changing the token or rev", async () => {
     const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 20 });
@@ -345,8 +388,8 @@ describe("quota change never touches the permanent URL", () => {
 
     await updateQuota(token, 200);
 
-    // 200 purchased minus 80 used = 120 applied.
-    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(120 * GIB);
+    // Absolute cap 200 minus cumulative usage 80 leaves 120 GB available.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(200 * GIB);
   });
 
   it("accounts for usage when the quota is lowered", async () => {
@@ -354,8 +397,8 @@ describe("quota change never touches the permanent URL", () => {
 
     await updateQuota(token, 90);
 
-    // 90 purchased minus 80 used = 10 applied.
-    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(10 * GIB);
+    // Absolute cap 90 minus cumulative usage 80 leaves 10 GB available.
+    expect(fakeOutline.getKey(SRV, keyId)!.dataLimit!.bytes).toBe(90 * GIB);
   });
 
   it("switches a customer to unlimited", async () => {

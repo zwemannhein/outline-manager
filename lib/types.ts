@@ -51,6 +51,8 @@ export interface KeyMeta {
   periodStart?: string | null;
   /** Bytes used on PREVIOUS keys during the current cycle (migration debt). */
   carriedBytes?: number;
+  /** Cumulative bytes already present on the current key when this cycle began. */
+  usageBaselineBytes?: number;
   /** Number of 30-day cycles purchased. */
   cyclesTotal?: number;
   /** Cycles consumed so far, starting at 1 on approval. */

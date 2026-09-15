@@ -10,11 +10,8 @@
  * monthly allowance and clears migration debt. An expired subscription receives
  * no further cycle.
  *
- * WHY THIS MATCHES OUTLINE
- * Outline's `enforceAccessKeyDataLimits` compares usage over a rolling 30-day
- * window. Because a cycle is exactly 30 days, "usage in the rolling window"
- * equals "usage since cycle start" for the current key — nothing has aged out
- * yet. So enforcement is native and we keep no cumulative counter.
+ * Outline counters are cumulative per key. A stored baseline makes each billing
+ * cycle independent while the underlying key remains unchanged.
  *
  * ANCHORING
  * Rollover sets `periodStart = previousPeriodStart + 30 days`, never `now`. The
@@ -51,8 +48,9 @@ import {
   expiryAt,
   cyclesExhausted,
   isExpired,
+  computeOutlineLimit,
 } from "./key-meta";
-import { applyDataLimit } from "./outline-admin";
+import { applyDataLimit, getKeyUsageBytes } from "./outline-admin";
 import { disableIdentity } from "./dynamic-lifecycle";
 
 const logger = createLogger("quota-cycles");
@@ -192,13 +190,16 @@ export async function processCycleRollovers(
       continue;
     }
 
-    // Anchored advance: previousPeriodStart + 30 days, never `now`.
-    const next = advanceCycle(meta);
-
     try {
-      // Restore the full monthly allowance. This also undoes any reduction a
-      // mid-cycle migration applied to the destination key.
-      await applyDataLimit(record.serverId, record.outlineKeyId, next.quotaBytes ?? null);
+      const currentBytes = await getKeyUsageBytes(record.serverId, record.outlineKeyId);
+      // Anchored advance: previousPeriodStart + 30 days, never `now`.
+      const next = advanceCycle(meta, currentBytes);
+      await applyDataLimit(record.serverId, record.outlineKeyId, computeOutlineLimit(next));
+      await writeKeyMeta(record.serverId, record.outlineKeyId, next);
+
+      const nextDue = cycleDueAt(next);
+      if (nextDue) await scheduleCycleDue(token, nextDue);
+      else await clearCycleDue(token);
     } catch {
       failed += 1;
       logger.error({ dyn: maskId(token) }, "Failed to restore quota at cycle rollover");
@@ -206,19 +207,9 @@ export async function processCycleRollovers(
       continue;
     }
 
-    await writeKeyMeta(record.serverId, record.outlineKeyId, next);
-
-    // Schedule the following boundary from the NEW anchor.
-    const nextDue = cycleDueAt(next);
-    if (nextDue) {
-      await scheduleCycleDue(token, nextDue);
-    } else {
-      await clearCycleDue(token);
-    }
-
     rolled += 1;
     logger.info(
-      { dyn: maskId(token), cyclesUsed: next.cyclesUsed, cyclesTotal: next.cyclesTotal },
+      { dyn: maskId(token) },
       "Cycle rolled over; monthly quota restored"
     );
   }
