@@ -348,12 +348,18 @@ export function MonitoringPanel() {
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
                     <Row label="API latency"    value={ms(s.latencyMs)} />
                     <Row label="Total keys"     value={s.totalKeys} />
-                    <Row label="Managed"        value={s.managedKeys} />
-                    <Row label="Unmanaged"      value={s.unmanagedKeys} tone={s.unmanagedKeys > 0 ? "text-amber-600" : undefined} />
-                    <Row label="Active"         value={s.activeCustomers} />
-                    <Row label="Disabled"       value={s.disabledCustomers} />
-                    {s.missingKeys > 0      && <Row label="Missing keys"  value={s.missingKeys}      tone="text-red-600" />}
-                    {s.duplicateMappings > 0 && <Row label="Duplicates"   value={s.duplicateMappings} tone="text-red-600" />}
+                    {s.customerDataAvailable === false ? (
+                      <Row label="Customer records" value="Unavailable" tone="text-amber-600" />
+                    ) : (
+                      <>
+                        <Row label="Managed"        value={s.managedKeys} />
+                        <Row label="Unmanaged"      value={s.unmanagedKeys} tone={s.unmanagedKeys > 0 ? "text-amber-600" : undefined} />
+                        <Row label="Active"         value={s.activeCustomers} />
+                        <Row label="Disabled"       value={s.disabledCustomers} />
+                        {s.missingKeys > 0      && <Row label="Missing keys"  value={s.missingKeys}      tone="text-red-600" />}
+                        {s.duplicateMappings > 0 && <Row label="Duplicates"   value={s.duplicateMappings} tone="text-red-600" />}
+                      </>
+                    )}
                   </div>
 
                   {/* VPN endpoint */}

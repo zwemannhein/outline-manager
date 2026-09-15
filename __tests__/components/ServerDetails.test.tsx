@@ -25,6 +25,7 @@ const DETAILS = {
   expiredCustomers: 1,
   unmanagedKeys: 2,
   missingKeys: 0,
+  customerDataAvailable: true,
   checkedAt: new Date().toISOString(),
 };
 
@@ -88,5 +89,24 @@ describe("ServerDetails (read-only)", () => {
     render(<ServerDetails server={SERVER} onOnlineChange={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Total Outline keys")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /refresh/i })).toBeInTheDocument();
+  });
+
+  it("hides customer-derived counts when customer records are unavailable", async () => {
+    fetchServerDetails.mockResolvedValueOnce({
+      ...DETAILS,
+      customerDataAvailable: false,
+      managedCustomers: 0,
+      activeCustomers: 0,
+      disabledCustomers: 0,
+      expiredCustomers: 0,
+      unmanagedKeys: 0,
+      missingKeys: 0,
+    });
+
+    render(<ServerDetails server={SERVER} onOnlineChange={vi.fn()} />);
+
+    expect(await screen.findByText(/Customer records are temporarily unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unmanaged Outline key/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reference an Outline key that no longer exists/i)).not.toBeInTheDocument();
   });
 });

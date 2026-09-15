@@ -31,6 +31,7 @@ import {
   type HealthStatus,
 } from "@/lib/monitoring";
 import { getWriteBudget } from "@/lib/kv-sync";
+import { getMonitoringProbeBaseUrl } from "@/lib/monitor-origin";
 
 const CACHE_KEY = "monitor:system:cache";
 const CACHE_TTL = 30; // seconds
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
       } catch { /* cache miss — proceed */ }
     }
 
-    const baseUrl = getBaseUrl(req);
+    const baseUrl = getMonitoringProbeBaseUrl(req.nextUrl.origin);
     const startedAt = Date.now();
 
     // All checks in parallel — one failure never blocks the others.
@@ -132,12 +133,4 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     return handleApiError(error);
   }
-}
-
-function getBaseUrl(req: NextRequest): string {
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) return `https://${vercelUrl}`;
-  const host = req.headers.get("host") ?? "localhost:3000";
-  const proto = host.startsWith("localhost") ? "http" : "https";
-  return `${proto}://${host}`;
 }

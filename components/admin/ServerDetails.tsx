@@ -63,6 +63,7 @@ export function ServerDetails({ server, onOnlineChange }: ServerDetailsProps) {
 
   const connecting = loading && !data;
   const offline = !!data && !data.online;
+  const customerDataAvailable = data?.customerDataAvailable !== false;
 
   const stats: Array<{ icon: React.ReactNode; label: string; value: React.ReactNode }> = data
     ? [
@@ -70,10 +71,10 @@ export function ServerDetails({ server, onOnlineChange }: ServerDetailsProps) {
         { icon: <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500" />, label: "Total data used", value: offline ? "—" : formatBytes(data.totalDataUsedBytes) },
         { icon: <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-500" />, label: "Outline version", value: data.version ?? "—" },
         { icon: <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500" />, label: "Metrics", value: data.metricsEnabled == null ? "—" : data.metricsEnabled ? "Enabled" : "Disabled" },
-        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500" />, label: "Managed customers", value: offline ? "—" : data.managedCustomers },
-        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500" />, label: "Active customers", value: offline ? "—" : data.activeCustomers },
-        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />, label: "Disabled customers", value: offline ? "—" : data.disabledCustomers },
-        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />, label: "Expired customers", value: offline ? "—" : data.expiredCustomers },
+        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500" />, label: "Managed customers", value: offline || !customerDataAvailable ? "—" : data.managedCustomers },
+        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500" />, label: "Active customers", value: offline || !customerDataAvailable ? "—" : data.activeCustomers },
+        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />, label: "Disabled customers", value: offline || !customerDataAvailable ? "—" : data.disabledCustomers },
+        { icon: <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />, label: "Expired customers", value: offline || !customerDataAvailable ? "—" : data.expiredCustomers },
       ]
     : [];
 
@@ -147,6 +148,15 @@ export function ServerDetails({ server, onOnlineChange }: ServerDetailsProps) {
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
             <p className="text-red-800 dark:text-red-200">
               <strong>{data.missingKeys}</strong> managed customer{data.missingKeys === 1 ? "" : "s"} reference an Outline key that no longer exists on this server. Use <strong>Customers → Diagnose</strong> to investigate.
+            </p>
+          </div>
+        )}
+
+        {data && !offline && !customerDataAvailable && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+            <p className="text-amber-800 dark:text-amber-200">
+              Customer records are temporarily unavailable. Managed, missing, and unmanaged counts are hidden until Redis can be checked.
             </p>
           </div>
         )}

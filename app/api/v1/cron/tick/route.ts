@@ -41,30 +41,38 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
-function authorised(req: NextRequest): boolean {
+type CronAuthChannel = "bearer" | "vercel-signature";
+
+function authorise(req: NextRequest): CronAuthChannel | null {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
+  if (!secret) return null;
+
+  // Match the dedicated Vercel signature first. Source attribution below may
+  // only call a request "vercel" when this credential actually validated.
+  const vercelHeader = req.headers.get("x-vercel-cron-signature") ?? "";
+  if (vercelHeader && timingSafeEqualStr(vercelHeader, secret)) {
+    return "vercel-signature";
+  }
 
   const header = req.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  if (bearer && timingSafeEqualStr(bearer, secret)) return true;
+  if (bearer && timingSafeEqualStr(bearer, secret)) return "bearer";
 
-  // Vercel Cron sends the secret in this header.
-  const vercelHeader = req.headers.get("x-vercel-cron-signature") ?? "";
-  if (vercelHeader && timingSafeEqualStr(vercelHeader, secret)) return true;
-
-  return false;
+  return null;
 }
 
 /**
- * Derive the trigger source WITHOUT trusting arbitrary body text.
- *  - Vercel Cron always sends the `x-vercel-cron-signature` header.
+ * Derive the trigger source only after authentication.
+ *  - A successfully validated `x-vercel-cron-signature` is Vercel.
  *  - The Cloudflare Worker sends `{ source: "cloudflare-cron" }` in the body;
- *    only that exact literal is accepted, everything else is "manual".
+ *    that exact hint is accepted only on an authenticated bearer request.
  * The value is validated to a fixed allow-list by normalizeCronSource on write.
  */
-async function deriveSource(req: NextRequest): Promise<CronTriggerSource> {
-  if (req.headers.get("x-vercel-cron-signature")) return "vercel";
+async function deriveSource(
+  req: NextRequest,
+  authChannel: CronAuthChannel
+): Promise<CronTriggerSource> {
+  if (authChannel === "vercel-signature") return "vercel";
   try {
     const bodyText = await req.clone().text();
     if (bodyText) {
@@ -108,13 +116,14 @@ async function runTick(source: CronTriggerSource) {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!authorised(req)) {
+    const authChannel = authorise(req);
+    if (!authChannel) {
       // No detail: this endpoint should be invisible to anyone without the secret.
       logger.warn("Unauthorised cron invocation rejected");
       return new Response(null, { status: 404 });
     }
 
-    const source = await deriveSource(req);
+    const source = await deriveSource(req, authChannel);
     const result = await runTick(source);
     return successResponse({ ok: true, ...result });
   } catch (error) {

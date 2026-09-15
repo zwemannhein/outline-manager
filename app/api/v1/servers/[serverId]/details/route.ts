@@ -30,6 +30,7 @@ import {
   getTransferMetrics,
 } from "@/lib/outline-admin";
 import { listDynamicRecords, getTokenByOutlineKey } from "@/lib/dynamic-keys";
+import { normalizeOutlineKeyId, outlineKeyIdSet } from "@/lib/outline-key-id";
 import type { HealthStatus } from "@/lib/monitoring";
 
 export interface ServerDetails {
@@ -47,6 +48,7 @@ export interface ServerDetails {
   expiredCustomers: number;
   unmanagedKeys: number;
   missingKeys: number;
+  customerDataAvailable: boolean;
   detail?: string;
   checkedAt: string;
 }
@@ -95,13 +97,14 @@ export async function GET(
         expiredCustomers: 0,
         unmanagedKeys: 0,
         missingKeys: 0,
+        customerDataAvailable: recordsResult.status === "fulfilled",
         detail: "Management API unreachable",
         checkedAt,
       });
     }
 
     const outlineKeys = keysResult.value;
-    const outlineKeyIds = new Set(outlineKeys.map((k) => k.id));
+    const outlineKeyIds = outlineKeyIdSet(outlineKeys);
 
     const info = infoResult.status === "fulfilled" ? infoResult.value : null;
     const metrics =
@@ -110,8 +113,8 @@ export async function GET(
         : {};
     const totalDataUsedBytes = Object.values(metrics).reduce((a, b) => a + b, 0);
 
-    const allRecords =
-      recordsResult.status === "fulfilled" ? recordsResult.value : [];
+    const customerDataAvailable = recordsResult.status === "fulfilled";
+    const allRecords = customerDataAvailable ? recordsResult.value : [];
     const serverRecords = allRecords.filter(
       (r) => r.serverId === serverId && r.status !== "revoked"
     );
@@ -121,21 +124,32 @@ export async function GET(
     const expiredCustomers = serverRecords.filter((r) => r.status === "expired").length;
     const managedCustomers = serverRecords.length;
 
-    const missingKeys = serverRecords.filter(
-      (r) => !outlineKeyIds.has(r.outlineKeyId)
-    ).length;
+    const missingKeys = customerDataAvailable
+      ? serverRecords.filter(
+          (r) => !outlineKeyIds.has(normalizeOutlineKeyId(r.outlineKeyId))
+        ).length
+      : 0;
 
     // Unmanaged: Outline keys with no matching managed identity.
     let unmanagedKeys = 0;
-    for (const key of outlineKeys) {
-      const token = await getTokenByOutlineKey(serverId, key.id).catch(() => null);
-      if (!token) unmanagedKeys++;
+    if (customerDataAvailable) {
+      for (const key of outlineKeys) {
+        const token = await getTokenByOutlineKey(
+          serverId,
+          normalizeOutlineKeyId(key.id)
+        ).catch(() => null);
+        if (!token) unmanagedKeys++;
+      }
     }
 
     const issues: string[] = [];
     let status: HealthStatus = "healthy";
     if (infoResult.status === "rejected") {
       issues.push("Server info unavailable (keys still loaded)");
+      status = "warning";
+    }
+    if (!customerDataAvailable) {
+      issues.push("Customer records unavailable");
       status = "warning";
     }
     if (missingKeys > 0) {
@@ -158,6 +172,7 @@ export async function GET(
       expiredCustomers,
       unmanagedKeys,
       missingKeys,
+      customerDataAvailable,
       detail: issues.length ? issues.join("; ") : undefined,
       checkedAt,
     });

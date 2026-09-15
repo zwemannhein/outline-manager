@@ -31,6 +31,7 @@ import {
 } from "@/lib/dynamic-keys";
 import { CHECK_TIMEOUT_MS, type HealthStatus } from "@/lib/monitoring";
 import type { ServerInfo } from "@/lib/types";
+import { normalizeOutlineKeyId, outlineKeyIdSet } from "@/lib/outline-key-id";
 
 const CACHE_KEY = "monitor:outline:cache";
 const CACHE_TTL = 30;
@@ -88,6 +89,7 @@ export interface OutlineServerHealth {
   disabledCustomers: number;
   missingKeys: number;
   duplicateMappings: number;
+  customerDataAvailable: boolean;
   vpnEndpoint?: {
     host: string;
     port: number;
@@ -101,7 +103,8 @@ export interface OutlineServerHealth {
 async function checkServer(
   serverId: string,
   name: string,
-  dynamicRecords: Awaited<ReturnType<typeof listDynamicRecords>>
+  dynamicRecords: Awaited<ReturnType<typeof listDynamicRecords>>,
+  customerDataAvailable: boolean
 ): Promise<OutlineServerHealth> {
   const checkedAt = new Date().toISOString();
 
@@ -123,11 +126,12 @@ async function checkServer(
         totalKeys: 0, managedKeys: 0, unmanagedKeys: 0,
         activeCustomers: 0, disabledCustomers: 0,
         missingKeys: 0, duplicateMappings: 0,
+        customerDataAvailable,
       };
     }
 
     const outlineKeys = keysResult.value;
-    const outlineKeyIds = new Set(outlineKeys.map((k) => k.id));
+    const outlineKeyIds = outlineKeyIdSet(outlineKeys);
 
     const serverRecords = dynamicRecords.filter(
       (r) => r.serverId === serverId && r.status !== "revoked"
@@ -138,14 +142,21 @@ async function checkServer(
       (r) => r.status === "disabled" || r.status === "expired"
     ).length;
 
-    const missingKeys = serverRecords.filter(
-      (r) => !outlineKeyIds.has(r.outlineKeyId)
-    ).length;
+    const missingKeys = customerDataAvailable
+      ? serverRecords.filter(
+          (r) => !outlineKeyIds.has(normalizeOutlineKeyId(r.outlineKeyId))
+        ).length
+      : 0;
 
     let unmanagedCount = 0;
-    for (const key of outlineKeys) {
-      const token = await getTokenByOutlineKey(serverId, key.id).catch(() => null);
-      if (!token) unmanagedCount++;
+    if (customerDataAvailable) {
+      for (const key of outlineKeys) {
+        const token = await getTokenByOutlineKey(
+          serverId,
+          normalizeOutlineKeyId(key.id)
+        ).catch(() => null);
+        if (!token) unmanagedCount++;
+      }
     }
 
     const keyIdCounts = new Map<string, number>();
@@ -162,6 +173,10 @@ async function checkServer(
 
     if (infoResult.status === "rejected") {
       issues.push("Server info unavailable (keys still loaded)");
+      status = "warning";
+    }
+    if (!customerDataAvailable) {
+      issues.push("Customer records unavailable");
       status = "warning";
     }
     if (missingKeys > 0) {
@@ -213,6 +228,7 @@ async function checkServer(
       disabledCustomers,
       missingKeys,
       duplicateMappings,
+      customerDataAvailable,
       vpnEndpoint,
     };
   } catch {
@@ -223,6 +239,7 @@ async function checkServer(
       totalKeys: 0, managedKeys: 0, unmanagedKeys: 0,
       activeCustomers: 0, disabledCustomers: 0,
       missingKeys: 0, duplicateMappings: 0,
+      customerDataAvailable,
     };
   }
 }
@@ -245,13 +262,17 @@ export async function GET(req: NextRequest) {
       } catch { /* miss */ }
     }
 
-    const [servers, dynamicRecords] = await Promise.all([
+    const [servers, recordsResult] = await Promise.all([
       listRegisteredServers(),
-      listDynamicRecords().catch(() => []),
+      listDynamicRecords()
+        .then((records) => ({ available: true, records }))
+        .catch(() => ({ available: false, records: [] })),
     ]);
 
     const results = await Promise.all(
-      servers.map((s) => checkServer(s.id, s.name, dynamicRecords))
+      servers.map((s) =>
+        checkServer(s.id, s.name, recordsResult.records, recordsResult.available)
+      )
     );
 
     const overall: HealthStatus =

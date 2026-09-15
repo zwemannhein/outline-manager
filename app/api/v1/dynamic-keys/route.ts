@@ -27,6 +27,7 @@ import { readAllKeyMeta, metaField, computeQuotaUsage, describeQuota } from "@/l
 import { getSyncState, getWriteBudget, countDirtyTokens } from "@/lib/kv-sync";
 import { listRegisteredServers, getTransferMetrics, listAccessKeys } from "@/lib/outline-admin";
 import { createLogger } from "@/lib/logger";
+import { outlineKeyIdSet } from "@/lib/outline-key-id";
 
 const logger = createLogger("dynamic-keys-api");
 
@@ -66,9 +67,7 @@ export async function GET(req: NextRequest) {
       );
       keyIdsByServer.set(
         server.id,
-        // Outline 1.12.x can serialize numeric-looking IDs as numbers even
-        // though our persisted identity schema stores them as strings.
-        keys.status === "fulfilled" ? new Set(keys.value.map((key) => String(key.id))) : null
+        keys.status === "fulfilled" ? outlineKeyIdSet(keys.value) : null
       );
     }
 

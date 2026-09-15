@@ -103,6 +103,15 @@ describe("cron route trigger-source derivation", () => {
     expect(lastSource()).toBe("manual");
   });
 
+  it("does not label an invalid Vercel signature as vercel when bearer auth succeeds", async () => {
+    const { POST } = await loadRoute();
+    await POST(makeReq({
+      Authorization: `Bearer ${SECRET}`,
+      "x-vercel-cron-signature": "invalid-signature",
+    }) as never);
+    expect(lastSource()).toBe("manual");
+  });
+
   it("does not trust an arbitrary source string in the body", async () => {
     const { POST } = await loadRoute();
     await POST(makeReq(

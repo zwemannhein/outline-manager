@@ -803,6 +803,7 @@ export interface OutlineServerHealth {
   activeCustomers: number;
   disabledCustomers: number;
   missingKeys: number;
+  customerDataAvailable: boolean;
   duplicateMappings: number;
   vpnEndpoint?: {
     host: string;
@@ -919,6 +920,7 @@ export interface ServerDetails {
   expiredCustomers: number;
   unmanagedKeys: number;
   missingKeys: number;
+  customerDataAvailable: boolean;
   detail?: string;
   checkedAt: string;
 }
