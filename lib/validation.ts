@@ -74,7 +74,7 @@ const newPasswordSchema = z
   .min(MIN_ADMIN_PASSWORD_LENGTH, `Password must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`)
   .max(200, "Password too long");
 
-/** Browser polling / cancelling a pending Telegram login approval. */
+/** Legacy payload schema retained for the retired login-approval endpoints. */
 export const loginAttemptSchema = z.object({
   attemptId: attemptIdSchema,
   browserSecret: browserSecretSchema,
@@ -175,8 +175,8 @@ export const backfillSchema = z.object({
 
 /**
  * First-run password setup. Takes no current password: the caller already proved
- * possession of the bootstrap password and passed Telegram approval to obtain
- * the JWT that authorises this call.
+ * possession of the bootstrap password to obtain the JWT that authorises this
+ * call.
  */
 export const bootstrapPasswordSchema = z.object({
   newPassword: newPasswordSchema,

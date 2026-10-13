@@ -5,8 +5,8 @@
  * recognised HTTP handlers and route config, not helper functions.
  *
  * A single Telegram bot supports only one webhook URL, so order callbacks and
- * admin-login callbacks must share /api/v1/telegram/webhook. They are kept
- * apart by an explicit type prefix rather than by guessing from the payload.
+ * legacy login callbacks share /api/v1/telegram/webhook. Login callbacks are
+ * acknowledged as inactive and never authorize a dashboard session.
  */
 
 export type CallbackAction =
@@ -17,7 +17,7 @@ export type CallbackAction =
 /**
  * Supported formats:
  *   order_approve:<orderId>    order_reject:<orderId>     (current)
- *   login_approve:<attemptId>  login_reject:<attemptId>   (reserved)
+ *   login_approve:<attemptId>  login_reject:<attemptId>   (legacy, inactive)
  *   approve_<orderId>          reject_<orderId>           (legacy)
  *
  * The legacy underscore format is still accepted because approve/reject buttons

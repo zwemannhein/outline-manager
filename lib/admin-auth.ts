@@ -237,9 +237,9 @@ export async function verifyAdminPassword(candidate: string): Promise<boolean> {
  * The authoritative admin username.
  *
  * Supports an optional `username` field on `admin:auth` for a future runtime
- * username, falling back to ADMIN_USERNAME. Used by the login approval message
- * and by Forgot Password, which must be able to tell the admin their username
- * without being given it first.
+ * username, falling back to ADMIN_USERNAME. Used by login responses and Forgot
+ * Password, which must be able to tell the admin their username without being
+ * given it first.
  */
 export async function getCurrentAdminUsername(): Promise<string> {
   try {

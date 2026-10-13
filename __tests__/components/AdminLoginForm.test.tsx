@@ -10,8 +10,6 @@ import userEvent from "@testing-library/user-event";
  */
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
-  pollLoginStatus: vi.fn(),
-  cancelLogin: vi.fn(),
   forgotPassword: vi.fn(),
   verifyResetCode: vi.fn(),
   resetPassword: vi.fn(),
@@ -39,7 +37,6 @@ beforeEach(() => {
   });
   mocks.verifyResetCode.mockResolvedValue(undefined);
   mocks.resetPassword.mockResolvedValue(undefined);
-  mocks.pollLoginStatus.mockResolvedValue("pending");
 });
 
 afterEach(() => cleanup());
@@ -62,12 +59,8 @@ describe("normal login screen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/enter your username and password/i);
   });
 
-  it("moves to the Telegram waiting state and never unlocks on its own", async () => {
-    mocks.login.mockResolvedValue({
-      attemptId: "b".repeat(32),
-      browserSecret: "c".repeat(64),
-      expiresAt: new Date(Date.now() + 300000).toISOString(),
-    });
+  it("unlocks immediately after the server accepts the admin credentials", async () => {
+    mocks.login.mockResolvedValue(undefined);
 
     const { user, onUnlock } = setup();
 
@@ -75,10 +68,9 @@ describe("normal login screen", () => {
     await user.type(screen.getByLabelText(/^password$/i), "some-password");
     await user.click(screen.getByRole("button", { name: /^login$/i }));
 
-    expect(await screen.findByText(/waiting for telegram approval/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-    // Credentials alone must never unlock the dashboard.
-    expect(onUnlock).not.toHaveBeenCalled();
+    await waitFor(() => expect(onUnlock).toHaveBeenCalledTimes(1));
+    expect(mocks.login).toHaveBeenCalledWith("some-admin", "some-password");
+    expect(screen.queryByText(/waiting for telegram approval/i)).toBeNull();
   });
 });
 

@@ -1,33 +1,25 @@
 "use client";
 
 /**
- * Admin login with two additional flows:
- *
- *  1. Telegram approval — correct credentials do not log you in. The server
- *     creates a pending attempt, Telegram shows Approve/Reject, and this form
- *     polls until a decision arrives.
- *
- *  2. Forgot Password — deliberately asks for NO username. The server resolves
+ * Admin login uses the single admin's username and password. Forgot Password
+ * deliberately asks for NO username. The server resolves
  *     the current admin username and sends it, with a 6-digit code, to Telegram.
  *     That is how a forgotten username is recovered.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Shield, Eye, EyeOff, ArrowLeft, Server, Sparkles, Lock,
-  MessageCircle, KeyRound, CheckCircle2, XCircle, Clock,
+  MessageCircle, KeyRound, CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   login,
-  pollLoginStatus,
-  cancelLogin,
   forgotPassword,
   verifyResetCode,
   resetPassword,
-  type LoginApprovalHandle,
 } from "@/lib/sync";
 
 interface AdminLoginFormProps {
@@ -37,15 +29,11 @@ interface AdminLoginFormProps {
 
 type Step =
   | "credentials"
-  | "awaiting-approval"
-  | "approval-rejected"
-  | "approval-expired"
   | "forgot-sending"
   | "forgot-code"
   | "forgot-new-password"
   | "forgot-success";
 
-const POLL_INTERVAL_MS = 2500;
 const RESEND_COOLDOWN_SECONDS = 60;
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -61,9 +49,6 @@ export function AdminLoginForm({ onUnlock, onBack }: AdminLoginFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Telegram approval
-  const handleRef = useRef<LoginApprovalHandle | null>(null);
-
   // Forgot password
   const [resetId, setResetId] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -78,49 +63,7 @@ export function AdminLoginForm({ onUnlock, onBack }: AdminLoginFormProps) {
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  // ── Poll for the Telegram decision ──────────────────────────────────────────
-  useEffect(() => {
-    if (step !== "awaiting-approval") return;
-    const handle = handleRef.current;
-    if (!handle) return;
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-
-    async function tick() {
-      if (cancelled) return;
-      try {
-        const status = await pollLoginStatus(handle!);
-        if (cancelled) return;
-
-        if (status === "approved") {
-          handleRef.current = null;
-          onUnlock();
-          return;
-        }
-        if (status === "rejected") {
-          setStep("approval-rejected");
-          return;
-        }
-        if (status === "expired" || status === "cancelled" || status === "consumed") {
-          setStep("approval-expired");
-          return;
-        }
-      } catch {
-        // Keep polling on transient failures.
-      }
-      timer = setTimeout(tick, POLL_INTERVAL_MS);
-    }
-
-    timer = setTimeout(tick, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [step, onUnlock]);
-
   function resetAll() {
-    handleRef.current = null;
     setStep("credentials");
     setPassword("");
     setCode("");
@@ -143,21 +86,14 @@ export function AdminLoginForm({ onUnlock, onBack }: AdminLoginFormProps) {
 
     setLoading(true);
     try {
-      handleRef.current = await login(username.trim(), password);
+      await login(username.trim(), password);
       setPassword("");
-      setStep("awaiting-approval");
+      onUnlock();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleCancelApproval() {
-    const handle = handleRef.current;
-    handleRef.current = null;
-    setStep("credentials");
-    if (handle) await cancelLogin(handle);
   }
 
   // ── Forgot password ─────────────────────────────────────────────────────────
@@ -448,66 +384,10 @@ export function AdminLoginForm({ onUnlock, onBack }: AdminLoginFormProps) {
           <p className="text-sm font-medium">Password reset successfully.</p>
           <p className="text-xs text-muted-foreground">
             Sign in with your username from Telegram and your new password.
-            You will still need to approve the login in Telegram.
           </p>
           <Button onClick={resetAll} className="w-full h-12 text-base font-semibold">
             Back to Login
           </Button>
-        </div>
-      </>,
-      false
-    );
-  }
-
-  // ── Awaiting Telegram approval ──────────────────────────────────────────────
-  if (step === "awaiting-approval") {
-    return shell(
-      <>
-        {header(
-          <MessageCircle className="w-8 h-8 sm:w-10 sm:h-10 text-white" />,
-          "Approval Required",
-          "Approve this login from Telegram to continue."
-        )}
-        <div className="flex flex-col items-center gap-5 py-2">
-          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-          <p className="text-sm font-medium">Waiting for Telegram approval...</p>
-          <p className="text-xs text-muted-foreground text-center">
-            A login request was sent to your Telegram. It expires in 5 minutes.
-          </p>
-          <Button variant="outline" onClick={handleCancelApproval} className="w-full h-11">
-            Cancel
-          </Button>
-        </div>
-      </>,
-      false
-    );
-  }
-
-  // ── Rejected ────────────────────────────────────────────────────────────────
-  if (step === "approval-rejected") {
-    return shell(
-      <>
-        {header(<XCircle className="w-8 h-8 sm:w-10 sm:h-10 text-white" />, "Login Rejected", "")}
-        <div className="text-center space-y-6">
-          <p className="text-sm font-medium">Login request rejected.</p>
-          <p className="text-xs text-muted-foreground">
-            The request was declined in Telegram. If that was not you, change your password.
-          </p>
-          <Button onClick={resetAll} className="w-full h-12">Back to Login</Button>
-        </div>
-      </>,
-      false
-    );
-  }
-
-  // ── Expired / cancelled ─────────────────────────────────────────────────────
-  if (step === "approval-expired") {
-    return shell(
-      <>
-        {header(<Clock className="w-8 h-8 sm:w-10 sm:h-10 text-white" />, "Request Expired", "")}
-        <div className="text-center space-y-6">
-          <p className="text-sm font-medium">Approval request expired. Please try again.</p>
-          <Button onClick={resetAll} className="w-full h-12">Back to Login</Button>
         </div>
       </>,
       false
@@ -603,9 +483,6 @@ export function AdminLoginForm({ onUnlock, onBack }: AdminLoginFormProps) {
         </div>
       </form>
 
-      <div className="text-center text-xs text-muted-foreground">
-        <p>Logins require Telegram approval</p>
-      </div>
     </>
   );
 }

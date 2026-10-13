@@ -16,7 +16,7 @@ The admin dashboard allows a single administrator to:
 - Monitor system health (Redis, Telegram, Cron, Outline servers, dynamic config)
 - Diagnose individual customer issues
 - Delete customers safely
-- Manage Telegram approvers for login security
+- Manage Telegram approvers for order notifications and decisions
 
 ---
 
@@ -30,7 +30,8 @@ The admin dashboard allows a single administrator to:
 
 ### Telegram Approvers Are NOT Dashboard Accounts
 
-- Telegram approvers can only Approve/Reject admin login requests via Telegram.
+- Admin dashboard login uses the single admin's username and password; Telegram approval is not required.
+- Telegram approvers can receive and Approve/Reject customer order requests via Telegram.
 - They have no dashboard password, no JWT, and no access to the admin UI.
 - Any number of approvers may be linked (including zero — env var fallback is used).
 - Authorization requires the verified numeric **Telegram `user_id`** and its stored `chat_id` binding — never username alone.

@@ -50,7 +50,8 @@ beforeEach(() => {
       quotaExhausted: true,
       planDescription: "100 GB every 30 days",
       periodStart: "2026-08-01T00:00:00.000Z",
-      expiryDate: "2026-10-01T00:00:00.000Z",
+      // Keep the fixture unexpired regardless of when this suite is run.
+      expiryDate: "2099-10-01T00:00:00.000Z",
       cyclesTotal: 2,
       cyclesUsed: 1,
       syncState: "synced",

@@ -3,9 +3,8 @@
 /**
  * Settings panel — currently contains Telegram Approvers management.
  *
- * Telegram approvers are NOT dashboard accounts. They are Telegram users who
- * can approve/reject admin login requests. The single dashboard admin account
- * is unchanged.
+ * Telegram approvers are NOT dashboard accounts. They receive and act on
+ * customer order notifications in Telegram. The dashboard has one admin login.
  */
 
 import React, { useCallback, useEffect, useState } from "react";
@@ -100,7 +99,7 @@ function AddApproverDialog({
 
         <p className="text-xs text-muted-foreground">
           This does <strong>not</strong> create a dashboard account. The approver can only
-          approve or reject admin login requests via Telegram.
+          approve or reject customer orders via Telegram.
         </p>
 
         {!pending ? (
@@ -279,9 +278,8 @@ export function SettingsPanel() {
         </div>
 
         <p className="text-xs text-muted-foreground leading-relaxed">
-          These Telegram users receive admin login approval requests. They are <strong>not</strong> dashboard
-          accounts — they can only approve or reject logins. Any number of approvers may be linked.
-          Any one of them can approve a login request.
+          These Telegram users can receive and approve or reject customer orders. They are <strong>not</strong> dashboard
+          accounts. Any number of approvers may be linked.
         </p>
 
         {/* Info box: no approvers */}

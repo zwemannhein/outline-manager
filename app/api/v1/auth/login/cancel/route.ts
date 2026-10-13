@@ -1,8 +1,8 @@
 /**
  * POST /api/v1/auth/login/cancel
  *
- * Browser-initiated cancellation of a pending login approval, so the admin can
- * back out without waiting for the 5-minute expiry.
+ * Legacy browser-initiated cancellation for login approval attempts created by
+ * older deployments. The active login flow does not create these attempts.
  *
  * Requires browserSecret, so a third party who somehow learned an attemptId
  * cannot cancel someone else's pending login.

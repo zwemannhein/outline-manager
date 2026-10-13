@@ -5,9 +5,8 @@
  * variable without any Vercel configuration change.
  *
  * Deliberately does NOT ask for the current password, because the caller has
- * already proven possession of it twice over:
- *   1. the JWT was only issued after the bootstrap password validated, and
- *   2. that login additionally required a Telegram approval tap.
+ * already proved possession of the bootstrap password when the login route
+ * issued the JWT. The endpoint also only works before `admin:auth` exists.
  *
  * Two guards keep this from becoming a password-reset bypass:
  *   - a valid admin JWT is required, and

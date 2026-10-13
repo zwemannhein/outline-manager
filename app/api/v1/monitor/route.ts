@@ -2,7 +2,7 @@
  * GET /api/v1/monitor
  *
  * Returns system health for: App, Redis, Telegram, Cron, Dynamic /k config,
- * login delivery telemetry, and Redis due-job counts.
+ * and Redis due-job counts.
  * All checks run in parallel with Promise.allSettled so one failure never
  * blocks the others.
  *
@@ -26,7 +26,6 @@ import {
   checkDynamicConfigHealth,
   checkCronHealth,
   getAppHealth,
-  readLoginTelemetry,
   getRedisDueJobCounts,
   type HealthStatus,
 } from "@/lib/monitoring";
@@ -62,7 +61,6 @@ export async function GET(req: NextRequest) {
       dynResult,
       cronResult,
       budgetResult,
-      loginTelemResult,
       dueJobsResult,
     ] = await Promise.allSettled([
       checkRedisHealth(),
@@ -70,7 +68,6 @@ export async function GET(req: NextRequest) {
       checkDynamicConfigHealth(baseUrl),
       checkCronHealth(),
       getWriteBudget(),
-      readLoginTelemetry(),
       getRedisDueJobCounts(),
     ]);
 
@@ -79,7 +76,6 @@ export async function GET(req: NextRequest) {
     const dynConfig = dynResult.status      === "fulfilled" ? dynResult.value      : { status: "critical" as HealthStatus, detail: "Check failed", checkedAt: new Date().toISOString() };
     const cron      = cronResult.status     === "fulfilled" ? cronResult.value     : { status: "warning"  as HealthStatus, detail: "Check failed", summary: null };
     const budget    = budgetResult.status   === "fulfilled" ? budgetResult.value   : null;
-    const loginTelemetry = loginTelemResult.status === "fulfilled" ? loginTelemResult.value : null;
     const dueJobs   = dueJobsResult.status  === "fulfilled" ? dueJobsResult.value  : { expiryDue: 0, cycleDue: 0, dirtyQueue: 0 };
 
     const app = getAppHealth();
@@ -114,11 +110,7 @@ export async function GET(req: NextRequest) {
           cycleDue:  dueJobs.cycleDue,
         },
       },
-      telegram: {
-        ...telegram,
-        // Login delivery telemetry — no secrets, only aggregate counts.
-        loginTelemetry,
-      },
+      telegram,
       cron,
       dynamicConfig: dynConfig,
       // AWS/server resource metrics: not configured in this project.

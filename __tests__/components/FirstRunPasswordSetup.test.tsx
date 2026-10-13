@@ -46,7 +46,7 @@ describe("forced first-run password setup", () => {
   it("never asks for the current password", () => {
     setup();
 
-    // The caller already proved possession via the bootstrap login + Telegram tap.
+    // The caller already proved possession via the bootstrap password login.
     expect(screen.queryByLabelText(/current password/i)).toBeNull();
     expect(screen.queryByLabelText(/username/i)).toBeNull();
   });

@@ -3,7 +3,7 @@
 /**
  * System Monitoring panel — read-only health dashboard.
  *
- * Shows: App, Redis (+ due jobs), Telegram (+ login telemetry),
+ * Shows: App, Redis (+ due jobs), Telegram,
  * Cron, Dynamic Config, Outline servers (+ VPN port status).
  * All data fetched server-side; never exposes credentials.
  * 30-second server-side cache; manual Refresh button.
@@ -212,7 +212,6 @@ export function MonitoringPanel() {
   }
 
   const tg = health.telegram;
-  const lt = tg.loginTelemetry;
 
   return (
     <div className="admin-page">
@@ -288,21 +287,6 @@ export function MonitoringPanel() {
         <Row label="Linked approvers" value={tg.linkedApprovers} />
         <Row label="Pending links"    value={tg.pendingLinks} />
         {tg.detail && <Row label="Detail" value={tg.detail} tone="text-amber-600" />}
-
-        <Divider label="Login Approval Telemetry" />
-        {lt ? (
-          <>
-            <Row label="Last challenge"   value={ago(lt.challengeCreatedAt)} />
-            <Row label="Recipients tried" value={lt.recipientsAttempted} />
-            <Row label="Delivered"        value={lt.deliverSucceeded} tone={lt.deliverSucceeded === 0 ? "text-red-600" : "text-green-700 dark:text-green-400"} />
-            <Row label="Failed"           value={lt.deliverFailed} tone={lt.deliverFailed > 0 ? "text-red-600" : undefined} />
-            {lt.deliverFailed > 0 && lt.lastFailureCategory && (
-              <Row label="Last error" value={lt.lastFailureCategory} tone="text-amber-600" />
-            )}
-          </>
-        ) : (
-          <Row label="Login telemetry" value={<span className="text-muted-foreground italic">No login attempt recorded</span>} />
-        )}
       </SectionCard>
 
       {/* Cron */}

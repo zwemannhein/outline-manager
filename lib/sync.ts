@@ -58,22 +58,7 @@ export function getAuthHeader(): string {
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-// ── Admin login (two-step: credentials, then Telegram approval) ───────────────
-
-export interface LoginApprovalHandle {
-  attemptId: string;
-  /** Held in memory / sessionStorage only, never persisted long-term. */
-  browserSecret: string;
-  expiresAt: string;
-}
-
-export type LoginPollStatus =
-  | "pending"
-  | "approved"
-  | "rejected"
-  | "cancelled"
-  | "consumed"
-  | "expired";
+// ── Admin login ───────────────────────────────────────────────────────────────
 
 async function readError(res: Response, fallback: string): Promise<string> {
   const data = await res.json().catch(() => null);
@@ -81,13 +66,13 @@ async function readError(res: Response, fallback: string): Promise<string> {
 }
 
 /**
- * Step 1: submit credentials. On success this does NOT log in — it returns a
- * handle for the Telegram approval that must follow.
+ * Submit the single admin's credentials and store the session token returned
+ * after successful verification.
  */
 export async function login(
   username: string,
   password: string
-): Promise<LoginApprovalHandle> {
+): Promise<void> {
   const res = await fetch("/api/v1/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -100,71 +85,15 @@ export async function login(
 
   const data = (await res.json()) as {
     status: string;
-    attemptId: string;
-    browserSecret: string;
-    expiresAt: string;
+    token: string;
+    username: string;
   };
 
-  if (data.status !== "approval_required" || !data.attemptId || !data.browserSecret) {
+  if (data.status !== "authenticated" || !data.token || !data.username) {
     throw new Error("Unexpected login response");
   }
 
-  return {
-    attemptId: data.attemptId,
-    browserSecret: data.browserSecret,
-    expiresAt: data.expiresAt,
-  };
-}
-
-/**
- * Step 2: poll for the Telegram decision. When approved, the server issues the
- * JWT and this stores it.
- */
-export async function pollLoginStatus(
-  handle: LoginApprovalHandle
-): Promise<LoginPollStatus> {
-  const res = await fetch("/api/v1/auth/login/status", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      attemptId: handle.attemptId,
-      browserSecret: handle.browserSecret,
-    }),
-  });
-
-  if (!res.ok) {
-    // Treat transport/rate-limit errors as "still pending" so the UI keeps trying.
-    return "pending";
-  }
-
-  const data = (await res.json()) as {
-    status: LoginPollStatus;
-    token?: string;
-    username?: string;
-  };
-
-  if (data.status === "approved" && data.token && data.username) {
-    setAuthToken(data.token, data.username);
-    return "approved";
-  }
-
-  return data.status;
-}
-
-/** Abandon a pending approval so it cannot later be used. */
-export async function cancelLogin(handle: LoginApprovalHandle): Promise<void> {
-  try {
-    await fetch("/api/v1/auth/login/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        attemptId: handle.attemptId,
-        browserSecret: handle.browserSecret,
-      }),
-    });
-  } catch {
-    // Best-effort: the attempt expires on its own within 5 minutes.
-  }
+  setAuthToken(data.token, data.username);
 }
 
 // ── Password management ───────────────────────────────────────────────────────
@@ -754,13 +683,6 @@ export interface SystemHealth {
     webhookConfigured: boolean;
     linkedApprovers: number;
     pendingLinks: number;
-    loginTelemetry: {
-      challengeCreatedAt: string;
-      recipientsAttempted: number;
-      deliverSucceeded: number;
-      deliverFailed: number;
-      lastFailureCategory: string;
-    } | null;
   };
   cron: {
     status: MonitorHealthStatus;

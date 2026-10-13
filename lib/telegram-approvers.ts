@@ -2,8 +2,8 @@
  * Telegram approver management.
  *
  * A single dashboard admin account may have ANY NUMBER of linked Telegram
- * approvers. Each approver is a Telegram user who can approve/reject admin
- * login requests. They are NOT dashboard accounts and have no password.
+ * approvers. Each approver is a Telegram user who can receive and approve/reject
+ * customer orders. They are NOT dashboard accounts and have no password.
  *
  * ── SECURITY MODEL ──────────────────────────────────────────────────────────
  * - Linking is done via a one-time cryptographic token (15-minute TTL, single use)

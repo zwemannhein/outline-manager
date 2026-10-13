@@ -3,7 +3,7 @@
  *
  * Single webhook for:
  *   1. /start <link-token>   — Telegram approver linking
- *   2. callback_query        — order approve/reject, login approve/reject
+ *   2. callback_query        — order approve/reject (legacy login decisions are inert)
  *
  * SECURITY MODEL
  *  1. X-Telegram-Bot-Api-Secret-Token is verified against TELEGRAM_WEBHOOK_SECRET
@@ -26,12 +26,6 @@ import {
 } from "@/lib/telegram";
 import { createLogger, maskId } from "@/lib/logger";
 import { parseCallbackData } from "@/lib/telegram-callback";
-import {
-  approveLoginAttempt,
-  rejectLoginAttempt,
-  getAttemptView,
-  isValidAttemptId,
-} from "@/lib/login-attempts";
 import {
   consumeLinkToken,
   isValidLinkToken,
@@ -181,10 +175,6 @@ export async function POST(req: NextRequest) {
       return await handleLoginCallback({
         botToken,
         callbackId: callback_query.id,
-        chatId: incomingChatId,
-        messageId: callback_query.message.message_id,
-        action: parsed.action,
-        attemptId: parsed.id,
       });
     }
 
@@ -271,8 +261,8 @@ async function handleStartLink(ctx: {
   await sendTelegramMessage(botToken, {
     chat_id: chatId,
     text:
-      "✅ Telegram approval access linked successfully.\n\n" +
-      "You will now receive admin login approval requests here. " +
+      "✅ Telegram order notifications enabled.\n\n" +
+      "You will receive customer order notifications here. " +
       "Tap Approve or Reject to respond.",
   });
 
@@ -281,62 +271,14 @@ async function handleStartLink(ctx: {
   return NextResponse.json({ ok: true });
 }
 
-// ── Admin login approve / reject ──────────────────────────────────────────────
+// ── Legacy admin login callback ───────────────────────────────────────────────
 
 async function handleLoginCallback(ctx: {
   botToken: string;
   callbackId: string;
-  chatId: string;
-  messageId: number;
-  action: "approve" | "reject";
-  attemptId: string;
 }): Promise<NextResponse> {
-  const { botToken, callbackId, chatId, messageId, action, attemptId } = ctx;
-
-  if (!isValidAttemptId(attemptId)) {
-    await answerCallback(botToken, callbackId, "⚠️ Invalid login request");
-    return NextResponse.json({ ok: false });
-  }
-
-  const view = await getAttemptView(attemptId);
-  if (!view) {
-    await answerCallback(botToken, callbackId, "⚠️ Login request not found or expired");
-    return NextResponse.json({ ok: false });
-  }
-
-  const result =
-    action === "approve"
-      ? await approveLoginAttempt(attemptId)
-      : await rejectLoginAttempt(attemptId);
-
-  if (!result.ok) {
-    const label =
-      result.reason === "expired"
-        ? "⚠️ This login request expired"
-        : result.reason === "not_found"
-          ? "⚠️ Login request not found"
-          : `⚠️ Already ${result.status}`;
-    await answerCallback(botToken, callbackId, label);
-    logger.info({ attempt: maskId(attemptId), reason: result.reason }, "Login decision ignored");
-    return NextResponse.json({ ok: true });
-  }
-
-  const approved = action === "approve";
-  await answerCallback(botToken, callbackId, approved ? "✅ Login approved!" : "❌ Login rejected!");
-
-  // Reflect outcome in the message.
-  await editTelegramMessageText(botToken, {
-    chatId,
-    messageId,
-    text:
-      (approved ? "✅ Login Approved\n\n" : "❌ Login Rejected\n\n") +
-      `👤 Username: ${view.username}\n` +
-      `🕐 Requested: ${view.createdAt ? new Date(view.createdAt).toLocaleString() : "unknown"}\n` +
-      `💻 Browser: ${view.userAgent}\n` +
-      `🌐 IP: ${view.ip}`,
-  });
-
-  logger.info({ attempt: maskId(attemptId), approved }, "Admin login decision recorded");
+  const { botToken, callbackId } = ctx;
+  await answerCallback(botToken, callbackId, "Admin login no longer needs Telegram approval.");
   return NextResponse.json({ ok: true });
 }
 

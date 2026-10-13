@@ -361,7 +361,8 @@ export interface LoginTelemetry {
 }
 
 /**
- * Persist a login approval delivery summary.
+ * Persist a legacy login approval delivery summary. Active login no longer
+ * writes or displays this telemetry.
  * Called by the login route after every attempt, success or failure.
  * Never throws — monitoring must never crash the auth path.
  */

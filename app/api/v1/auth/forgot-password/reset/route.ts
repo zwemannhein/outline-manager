@@ -11,7 +11,7 @@
  * Change Password action, so there is only one password implementation.
  *
  * Does NOT log the admin in: no JWT is issued here. The admin returns to the
- * login form and still has to pass Telegram approval.
+ * login form and signs in with the new password.
  */
 
 export const runtime = "nodejs";
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Deliberately no token: the admin must log in and pass Telegram approval.
+    // Deliberately no token: the admin must sign in with the new password.
     return successResponse({
       ok: true,
       status: "password_reset",

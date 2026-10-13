@@ -1,5 +1,6 @@
 /**
- * Admin login approval attempts (Telegram second factor).
+ * Legacy admin login approval attempts (Telegram second factor).
+ * The active dashboard login flow no longer creates or consumes these records.
  *
  * Correct username + password does NOT produce a JWT. It produces a pending
  * attempt that must be approved from Telegram, and the JWT is only minted when

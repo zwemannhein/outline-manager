@@ -14,7 +14,7 @@ A single admin uses it to:
 - Issue permanent Outline access keys wrapped in a stable `ssconf://` URL
 - Manage quota (GB per 30-day cycle), expiry, disable/enable, migration, and deletion
 - Monitor system health across all integrated services
-- Approve their own login via Telegram two-factor (any linked approver can approve)
+- Sign in with the single admin username and password; Telegram approval is not required
 
 Customers receive a stable token/path; the optional display-name fragment tracks the current customer name. The underlying Shadowsocks credentials can be rotated or migrated without changing the token.
 
@@ -34,7 +34,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | jose | ^5.9.6 | JWT session tokens |
 | Zod | ^3.23.8 | All input validation schemas |
 | Pino | ^9.5.0 | Structured server-side logging |
-| Telegram Bot API | HTTP REST | Login approval, order notifications, approver linking |
+| Telegram Bot API | HTTP REST | Order notifications/decisions, password reset, approver linking |
 | Outline Management API | HTTP/TLS cert-pinned | VPN server key management |
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
@@ -54,10 +54,10 @@ outline-manager/
 │   └── api/
 │       ├── v1/
 │       │   ├── auth/
-│       │   │   ├── login/route.ts          ← Step 1: credentials → challenge
-│       │   │   ├── login/status/route.ts   ← Step 2: poll approval status
-│       │   │   ├── login/cancel/route.ts   ← Browser-initiated cancel
-│       │   │   ├── verify/route.ts         ← Exchange approved challenge → JWT
+│       │   │   ├── login/route.ts          ← Credentials → 24-hour JWT
+│       │   │   ├── login/status/route.ts   ← Legacy approval poll; returns 410
+│       │   │   ├── login/cancel/route.ts   ← Legacy approval cancellation endpoint
+│       │   │   ├── verify/route.ts         ← Verify current JWT and password provenance
 │       │   │   ├── change-password/route.ts
 │       │   │   ├── forgot-password/route.ts
 │       │   │   ├── forgot-password/verify/route.ts
@@ -73,7 +73,7 @@ outline-manager/
 │       │   │   ├── route.ts             ← GET: list, DELETE: remove approver
 │       │   │   └── link-token/route.ts  ← POST: create one-time linking token
 │       │   ├── telegram/
-│       │   │   └── webhook/route.ts    ← Handles /start (linking) + callbacks (orders, login)
+│       │   │   └── webhook/route.ts    ← Handles /start (linking) + order callbacks
 │       │   ├── orders/                 ← Order CRUD, approve, reject, status
 │       │   ├── monitor/
 │       │   │   ├── route.ts            ← System health (app/Redis/Telegram/cron/dynconfig)
@@ -112,8 +112,8 @@ outline-manager/
 │   ├── dynamic-url.ts        ← Build/parse ssconf:// URLs, token validation
 │   ├── key-meta.ts           ← Per-key quota/cycle metadata: read, write, compute usage
 │   ├── kv-sync.ts            ← Cloudflare KV projection: put, delete, dirty queue, drain
-│   ├── login-attempts.ts     ← Login challenge state machine (Lua CAS in Redis)
-│   ├── monitoring.ts         ← Health checks, cron summary, login telemetry, due-job counts
+│   ├── login-attempts.ts     ← Legacy challenge state machine (not used by active login)
+│   ├── monitoring.ts         ← Health checks, cron summary, legacy telemetry, due-job counts
 │   ├── order-approval.ts     ← Approve/reject orders, idempotent, orphan adoption
 │   ├── order-claim.ts        ← One-time claim tokens for customer order status lookup
 │   ├── outline-admin.ts      ← Server-side Outline API client (cert-pinned, Redis registry)
@@ -126,8 +126,8 @@ outline-manager/
 │   ├── storage.ts            ← Browser localStorage helpers (server list, key meta legacy)
 │   ├── sync.ts               ← Browser API client (all fetch calls to v1 API, auth token mgmt)
 │   ├── telegram-approvers.ts ← Approver CRUD, link token create/consume, chatId lookup
-│   ├── telegram-callback.ts  ← Parse Telegram callback_data (order/login prefixes)
-│   ├── telegram.ts           ← sendTelegramMessage, sendLoginApprovalRequest, etc.
+│   ├── telegram-callback.ts  ← Parse Telegram callback_data (order prefixes; legacy login prefix)
+│   ├── telegram.ts           ← sendTelegramMessage, order approval, password reset, etc.
 │   ├── types.ts              ← Shared TypeScript types (OutlineServer, DynamicKeyRecord, etc.)
 │   ├── validation.ts         ← All Zod schemas + getEnv() environment validation
 │   └── utils.ts              ← cn(), formatBytes(), uuid()
@@ -194,8 +194,8 @@ Identity `status` values: `active` | `disabled` | `expired` | `revoked`
 | Key | Type | Purpose |
 |---|---|---|
 | `admin:auth` | HASH | passwordHash (scrypt), salt, algorithm, username, updatedAt |
-| `adminlogin:<attemptId>` | HASH TTL 5m | Login challenge: state, browserSecretHash, username, ip, userAgent, expiresAtMs |
-| `adminlogin:pending` | SET | Active attempt IDs (for pending count check) |
+| `adminlogin:<attemptId>` | HASH TTL 5m | Legacy login challenges; no longer created or exchanged for sessions |
+| `adminlogin:pending` | SET | Legacy pending-attempt index; no longer used by dashboard login |
 
 ### Telegram Approvers
 
@@ -262,32 +262,20 @@ Two modes via `POST /api/v1/admin/customers`:
 
 ```
 1. POST /api/v1/auth/login
+   - Rate limit to 5 attempts per IP per 15 minutes
    - Verify username + password (scrypt, timing-safe)
-   - Create LoginAttempt in Redis (status=pending, TTL 5min)
-   - Build target list: merge linked approver chatIds + TELEGRAM_CHAT_ID env var
-     (IMPORTANT: env var is ALWAYS included, not just as fallback)
-   - Send Approve/Reject buttons to all targets
-   - Write monitor:login:last telemetry
-   - Return { attemptId, browserSecret, expiresAt }
+   - On success, issue a 24-hour JWT and return it to the browser
+   - Telegram approval is not required and no login challenge is created
 
-2. Browser polls POST /api/v1/auth/login/status
-   - Sends { attemptId, browserSecret }
-   - Returns current state: pending | approved | rejected | expired
+2. Browser stores the JWT in sessionStorage
 
-3. Any linked Telegram approver taps Approve or Reject
-   → POST /api/v1/telegram/webhook (callback_query)
-   → Verify callback `from.id` and chat against the stored linked binding
-   → First valid decision wins via Redis Lua CAS
-   → editTelegramMessageText reflects decision in chat
-
-4. On approved: POST /api/v1/auth/verify
-   - Browser sends { attemptId, browserSecret }
-   - consumeApprovedAttempt: CAS pending→consumed (exactly once)
-   - JWT minted, returned to browser
-   - Browser stores JWT in sessionStorage
-
-5. All subsequent admin API calls include: Authorization: Bearer <jwt>
+3. All subsequent admin API calls include: Authorization: Bearer <jwt>
 ```
+
+The legacy `/api/v1/auth/login/status` endpoint returns HTTP 410 and cannot mint
+sessions from challenges created by older deployments. The login cancel endpoint
+and login-attempt helper remain only for compatibility; the current dashboard
+does not call them.
 
 ### Telegram Approver Linking
 
@@ -303,29 +291,29 @@ User clicks link in Telegram:
   → consumeLinkToken: atomically deletes key (prevents replay)
   → Checks private user/chat binding and expected username (when specified)
   → Stores tg:approver:<userId> with chatId, username, linkedAt
-  → Bot replies: "Telegram approval access linked successfully."
+  → Bot replies that customer order notifications will be sent to this account.
 ```
-
-### Fallback / Stale Approver Handling
-
-If a Redis approver record exists but the bot cannot message that chatId (e.g. user never started the bot), the `TELEGRAM_CHAT_ID` env var is **always merged** into the target list — it is never skipped. This was the root cause of a production login outage that has been fixed.
 
 ### Password Reset / First Run
 
 - Forgot Password: sends HMAC 6-digit code to Telegram → user enters code in browser → new password set atomically.
-- First Run: if `admin:auth` key does not exist, login bootstraps from `ADMIN_PASSWORD` env var, then forces password change on first dashboard access.
+- First Run: if `admin:auth` key does not exist, login authenticates against `ADMIN_PASSWORD` env var, then forces password change on first dashboard access.
 
 ---
 
 ## G. TELEGRAM
 
-### 1. Admin Login Approval
+### 1. Admin Login
 
-Sent after correct username+password. Approve/Reject buttons use `callback_data: login_approve:<attemptId>` and `login_reject:<attemptId>`. First decision wins atomically.
+Dashboard login is password-only after the existing rate limit and timing-safe
+credential check. No login approval notification is sent. Legacy login callback
+handling is inactive; the status endpoint returns 410.
 
 ### 2. Order Notifications
 
-Sent to all chatIds when a new order is submitted. Approve/Reject buttons use `callback_data: order_approve:<orderId>` (and legacy `approve_<orderId>`). Approval from Telegram uses the same engine as dashboard approval — idempotent.
+Sent to configured Telegram approvers when a new order is submitted. Approve/Reject
+buttons use `callback_data: order_approve:<orderId>` (and legacy `approve_<orderId>`).
+Approval from Telegram uses the same engine as dashboard approval — idempotent.
 
 ### 3. Approver Linking
 
@@ -519,7 +507,7 @@ All checks run server-side via `GET /api/v1/monitor` and `GET /api/v1/monitor/ou
 | Application | env, region, commit SHA |
 | Dynamic Config | Probe `/k/0000...0000` → expect 404 (proves route + Redis live) |
 | Upstash Redis | Ping latency, KV write budget, dirty queue, expiry/cycle due counts |
-| Telegram | getMe latency, webhook status, linked approver count, login delivery telemetry |
+| Telegram | getMe latency, webhook status, linked approver count, pending links |
 | Cron | Last run time, duration, processed/failed counts, overdue detection |
 | Outline Servers | Per-server: API latency, key counts, managed/unmanaged, missing keys, duplicate mappings, VPN TCP port reachability |
 
@@ -534,9 +522,8 @@ Never mutates anything.
 
 Not implemented. The UI always displays "Not configured" without failing. Adding AWS credentials alone does not enable collection.
 
-### Login Telemetry (monitor:login:last)
-
-Written after every login attempt. Contains: challengeCreatedAt, recipientsAttempted, deliverSucceeded, deliverFailed, lastFailureCategory (sanitised — no chatIds, no tokens).
+Historical login approval telemetry may remain in Redis, but is no longer
+updated or surfaced. It does not affect authentication.
 
 ---
 
@@ -602,13 +589,13 @@ Each pass is bounded (50/50/25 items) to stay within Vercel function timeout and
 | `KV_REST_API_URL` | Optional | Vercel KV alternative to Upstash |
 | `KV_REST_API_TOKEN` | Optional | Vercel KV alternative token |
 
-### Telegram — Required for login approval
+### Telegram — Used for order notifications, approver linking, and password reset
 
 | Variable | Status | Notes |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Required | Bot token from @BotFather |
 | `TELEGRAM_BOT_USERNAME` | Required for approver linking | Bot username without @; used only for deep-link generation |
-| `TELEGRAM_CHAT_ID` | Optional for login when linked approvers exist; operationally recommended | Comma-separated private chatIds; always merged into login targets and currently used directly by password reset and order notifications |
+| `TELEGRAM_CHAT_ID` | Optional | Comma-separated private chatIds used for password-reset and order-workflow notifications |
 | `TELEGRAM_WEBHOOK_SECRET` | Strongly recommended | Webhook HMAC verification secret (min 16 chars) |
 
 ### Dynamic Config / VPN Core
@@ -733,7 +720,7 @@ cd worker && npm run type-check → PASS
 ### Implemented Features
 
 - Single admin account with scrypt password auth
-- Telegram two-factor login (any linked approver approves)
+- Rate-limited single-admin password login with 24-hour JWT sessions
 - Multiple Telegram approvers (linked via `/start` deep-link)
 - Telegram approver management UI (Settings tab)
 - Order submission (public page)
@@ -753,7 +740,6 @@ cd worker && npm run type-check → PASS
 - System Monitoring page (read-only, all services)
 - Customer Diagnose (read-only, 9 checks)
 - Cron job (expiry + cycle rollover + KV drain + telemetry)
-- Login delivery telemetry
 - Mobile-responsive dashboard (320px–desktop)
 - Backfill tool (migrate existing Outline keys to managed customers)
 - Forgot Password / Change Password
@@ -790,7 +776,7 @@ Do not repeat these mistakes.
 
 3. **Display names belong only in the outer fragment.** The current product format intentionally appends the URL-encoded customer name after `#`. Never place it in `/k/<token>`, use it as identity, or alter the Vercel resolver response.
 
-4. **Telegram order success ≠ login approval success.** Order notifications and login approval use different paths. When login approval stopped working, order notifications continued working. Always check login delivery telemetry (`monitor:login:last`) separately.
+4. **Telegram order delivery is separate from dashboard login.** Telegram is used for order actions and password reset; dashboard login verifies the admin password directly.
 
 5. **Stale Redis approver bypassed working env-var channel.** The bug: `chatIds = linkedChatIds.length > 0 ? linkedChatIds : staticIds`. A single stale approver record (bot returned "Not Found" for the chatId) caused `TELEGRAM_CHAT_ID` env var to be completely skipped. Fix: always merge both lists. Current code does this correctly — do not revert to the old conditional.
 
@@ -834,21 +820,15 @@ Do not repeat these mistakes.
 4. Check if token is 32 lowercase hex characters
 ```
 
-### 3. Telegram Login Message Not Arriving
+### 3. Telegram Order or Password Reset Message Not Arriving
 
 ```
 1. Dashboard → Monitoring → Telegram section
-   - Check "Login Approval Telemetry" → recipientsAttempted, deliverSucceeded, deliverFailed
-2. If deliverFailed > 0: check lastFailureCategory
-   - "Not Found": bot cannot message that chatId (user never started bot / wrong ID)
-   - "Forbidden": bot was blocked
-3. Check linked approvers count in Telegram section
-4. Check TELEGRAM_CHAT_ID env var is set in Vercel production settings
-5. Verify bot is working: Monitoring → Telegram → Bot should show "Healthy"
-6. To add a working approver: Settings → Telegram Approvers → Add Approver
+   - Check the bot status and linked approver count
+2. Check TELEGRAM_CHAT_ID or linked approver recipients are configured
+3. Verify the recipient has started the bot and has not blocked it
+4. To add a working approver: Settings → Telegram Approvers → Add Approver
    → send deep link to the Telegram user → they must click it and confirm
-7. Note: TELEGRAM_CHAT_ID is ALWAYS included in notification list alongside
-   dynamic approvers — both must be correct for reliable delivery
 ```
 
 ### 4. Cron Issue
@@ -873,8 +853,7 @@ Do not repeat these mistakes.
 Before shipping any change, verify none of these are broken:
 
 - [ ] **One dashboard admin account** — no additional accounts created
-- [ ] **Multiple Telegram approvers** — any number can be linked/unlinked
-- [ ] **TELEGRAM_CHAT_ID always included** — not skipped when Redis approvers exist
+- [ ] **Multiple Telegram approvers** — any number can be linked/unlinked for order workflows
 - [ ] **Permanent Vercel ssconf URL** — stable `/k/<token>` path with optional encoded name fragment; resolver returns JSON 200 for active customers
 - [ ] **Raw ss:// hidden** — never in API responses except audited `revealRaw` action
 - [ ] **Quota period logic** — 30-day cycle, configured quota displayed (not remaining)
