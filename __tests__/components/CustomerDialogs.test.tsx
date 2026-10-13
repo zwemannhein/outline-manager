@@ -45,9 +45,18 @@ describe("EditSubscriptionDialog quick plans", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: /1 month \+ 100 gb/i }));
+    const plan = screen.getByRole("button", { name: /1 month \+ 100 gb/i });
+    await user.click(plan);
+
+    const expectedExpiry = new Date();
+    expectedExpiry.setUTCDate(expectedExpiry.getUTCDate() + 30);
 
     expect(screen.getByLabelText("Quota")).toHaveValue(100);
-    expect(screen.getByLabelText("Expiry Date")).toHaveValue("2099-01-31");
+    expect(screen.getByLabelText("Expiry Date")).toHaveValue(expectedExpiry.toISOString().slice(0, 10));
+    expect(plan).toHaveAttribute("aria-pressed", "true");
+    expect(plan).toHaveTextContent("Selected");
+
+    await user.clear(screen.getByLabelText("Expiry Date"));
+    expect(plan).toHaveAttribute("aria-pressed", "false");
   });
 });

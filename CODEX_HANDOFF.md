@@ -402,7 +402,7 @@ Outline key, expiry, cycles, rev, or Cloudflare projection.
 
 ### Edit Subscription
 
-Single dialog edits both quota GB and expiry date together. The `1 month + 100 GB` quick plan sets a 100 GB per-cycle allowance and adds exactly 30 days to the current expiry (or starts 30 days from today when already expired/no expiry). Submits `editSubscription` action to `/api/v1/dynamic-keys/actions`. Past expiry → disables immediately (`disabledImmediately: true` in response).
+Single dialog edits both quota GB and expiry date together. The `1 month + 100 GB` quick plan sets a 100 GB per-cycle allowance and sets expiry to exactly 30 days from today. Submits `editSubscription` action to `/api/v1/dynamic-keys/actions`. Past expiry → disables immediately (`disabledImmediately: true` in response).
 
 ### Renew Button
 

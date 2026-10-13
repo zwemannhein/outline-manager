@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { X, ArrowRightLeft, Gauge, AlertTriangle, Users, RotateCcw } from "lucide-react";
+import { X, ArrowRightLeft, Gauge, AlertTriangle, Users, RotateCcw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -201,6 +201,7 @@ export function EditSubscriptionDialog({
   const [unlimited, setUnlimited] = useState(false);
   const [gb, setGb] = useState(100);
   const [expiry, setExpiry] = useState("");
+  const [selectedPlan, setSelectedPlan] = useState<"oneMonth100" | null>(null);
 
   useEffect(() => {
     if (!customer) return;
@@ -212,6 +213,7 @@ export function EditSubscriptionDialog({
         : Math.max(1, Math.round(((customer.configuredQuotaBytes ?? customer.quotaBytes ?? 0)) / (1024 * 1024 * 1024)))
     );
     setExpiry(customer.expiryDate ? customer.expiryDate.slice(0, 10) : "");
+    setSelectedPlan(null);
   }, [customer]);
 
   if (!customer) return null;
@@ -223,14 +225,12 @@ export function EditSubscriptionDialog({
   }
 
   function applyOneMonthPreset() {
-    const currentExpiry = customer?.expiryDate ? Date.parse(customer.expiryDate) : NaN;
-    const base = Number.isFinite(currentExpiry) && currentExpiry > Date.now()
-      ? new Date(currentExpiry)
-      : new Date();
+    const base = new Date();
     base.setUTCDate(base.getUTCDate() + 30);
     setUnlimited(false);
     setGb(100);
     setExpiry(base.toISOString().slice(0, 10));
+    setSelectedPlan("oneMonth100");
   }
 
   return (
@@ -246,7 +246,14 @@ export function EditSubscriptionDialog({
 
         {/* Unlimited toggle */}
         <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={unlimited}
+            onChange={(e) => {
+              setSelectedPlan(null);
+              setUnlimited(e.target.checked);
+            }}
+          />
           Unlimited data
         </label>
 
@@ -261,7 +268,10 @@ export function EditSubscriptionDialog({
                 min={1}
                 max={100000}
                 value={gb}
-                onChange={(e) => setGb(Math.max(1, Number(e.target.value) || 1))}
+                onChange={(e) => {
+                  setSelectedPlan(null);
+                  setGb(Math.max(1, Number(e.target.value) || 1));
+                }}
                 className="w-32"
               />
               <span className="text-sm text-muted-foreground">GB every 30 days</span>
@@ -274,14 +284,30 @@ export function EditSubscriptionDialog({
           <Button
             type="button"
             variant="outline"
-            className="w-full justify-between"
+            aria-pressed={selectedPlan === "oneMonth100"}
+            className={`w-full justify-between border transition-colors ${
+              selectedPlan === "oneMonth100"
+                ? "border-primary bg-primary/10 text-primary ring-2 ring-primary/20"
+                : "hover:border-primary/50 hover:bg-primary/5"
+            }`}
             onClick={applyOneMonthPreset}
           >
-            <span>1 month + 100 GB</span>
-            <span className="text-xs text-muted-foreground">30 days</span>
+            <span className="flex items-center gap-2">
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                selectedPlan === "oneMonth100"
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-muted-foreground/40"
+              }`}>
+                {selectedPlan === "oneMonth100" && <Check className="h-3.5 w-3.5" />}
+              </span>
+              <span className="font-medium">1 month + 100 GB</span>
+            </span>
+            <span className={selectedPlan === "oneMonth100" ? "text-xs text-primary" : "text-xs text-muted-foreground"}>
+              {selectedPlan === "oneMonth100" ? "Selected" : "30 days"}
+            </span>
           </Button>
           <p className="text-xs text-muted-foreground">
-            Sets 100 GB per 30-day cycle and adds 30 days to the current expiry.
+            Sets 100 GB per 30-day cycle and sets expiry to 30 days from today.
           </p>
         </div>
 
@@ -292,7 +318,10 @@ export function EditSubscriptionDialog({
             id="edit-sub-expiry"
             type="date"
             value={expiry}
-            onChange={(e) => setExpiry(e.target.value)}
+            onChange={(e) => {
+              setSelectedPlan(null);
+              setExpiry(e.target.value);
+            }}
           />
           <p className="text-xs text-muted-foreground">
             Leave blank for no expiry. A past date disables the customer immediately.
