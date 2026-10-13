@@ -310,6 +310,12 @@ export function ResetUsageDialog({
             <span className="text-muted-foreground">Current usage:</span>{" "}
             {formatBytes(customer.usedBytes)}
           </p>
+          <p className="mt-1">
+            <span className="text-muted-foreground">Configured quota:</span>{" "}
+            {customer.quotaBytes === null
+              ? "Unlimited"
+              : formatBytes(customer.configuredQuotaBytes ?? customer.quotaBytes)}
+          </p>
         </div>
 
         <div className="flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">

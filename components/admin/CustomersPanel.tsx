@@ -32,6 +32,7 @@ import {
   resyncCustomer,
   editCustomerSubscription,
   resetCustomerUsage,
+  repairCustomer,
   createAdminCustomer,
   deleteAdminCustomer,
   type DynamicCustomerRow,
@@ -312,6 +313,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
       resetUsage: "Resetting…",
       cleanup: "Cleaning up…",
       resync: "Syncing…",
+      repair: "Repairing…",
     };
     return map[busy.action] ?? "Working…";
   };
@@ -460,7 +462,7 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     {row.orphaned && row.status === "active" && !isCustomerExpired(row) && !row.quotaExhausted && !busyMsg && (
                       <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-destructive">
                         <AlertTriangle className="h-3 w-3" />
-                        Disable, then enable this customer to recreate the missing key.
+                        The physical Outline key is missing. Repair it to restore access.
                       </p>
                     )}
                     {row.orphaned && (row.status !== "active" || isCustomerExpired(row) || row.quotaExhausted) && !busyMsg && (
@@ -624,6 +626,26 @@ export function CustomersPanel({ servers }: CustomersPanelProps) {
                     >
                       <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                       <span>Resync</span>
+                    </Button>
+                  )}
+
+                  {row.orphaned && row.status === "active" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={Boolean(busy)}
+                      className="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() =>
+                        void run(
+                          row,
+                          "repair",
+                          () => repairCustomer(row.token),
+                          "Missing key repaired"
+                        )
+                      }
+                    >
+                      <Stethoscope className="mr-1.5 h-3.5 w-3.5" />
+                      Repair key
                     </Button>
                   )}
 

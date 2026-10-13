@@ -233,6 +233,24 @@ describe("disable closes both gates", () => {
 });
 
 describe("enable reopens both gates with the REMAINING quota", () => {
+  it("repairs an active customer whose physical key disappeared", async () => {
+    const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 20 });
+    const urlBefore = buildDynamicUrl(token, "Ko Aung");
+
+    await fakeOutline.request(SRV, "DELETE", `/access-keys/${keyId}`);
+    const result = await enableIdentity({ token, forceRecreate: true });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.recreatedKey).toBe(true);
+    expect(result.outlineKeyId).not.toBe(keyId);
+    expect(fakeOutline.getKey(SRV, result.outlineKeyId)?.dataLimit?.bytes).toBe(100 * GIB);
+
+    const record = (await readDynamicRecord(token))!;
+    expect(record.status).toBe("active");
+    expect(buildDynamicUrl(record.token, record.name)).toBe(urlBefore);
+  });
+
   it("restores remaining quota rather than a fresh allowance", async () => {
     const { token, keyId } = await seedCustomer({ quotaGB: 100, usedGB: 80 });
 

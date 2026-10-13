@@ -8,6 +8,7 @@
  * Actions:
  *   disable          close both gates (config delivery + Outline traffic)
  *   enable           reopen both, restoring the REMAINING current-cycle quota
+ *   repair           recreate a missing physical key without changing the token
  *   renew            extend cycles; same permanent URL
  *   updateQuota      change per-cycle quota; same permanent URL, zero KV writes
  *   resetUsage       start a fresh 30-day usage period; identity unchanged
@@ -34,6 +35,7 @@ import {
 import {
   disableDynamicSchema,
   enableDynamicSchema,
+  repairDynamicSchema,
   migrateDynamicSchema,
   migrateCleanupSchema,
   renewDynamicSchema,
@@ -65,6 +67,7 @@ const actionSchema = z.object({
   action: z.enum([
     "disable",
     "enable",
+    "repair",
     "renew",
     "updateQuota",
     "editSubscription",
@@ -155,6 +158,26 @@ export async function POST(req: NextRequest) {
           recreatedKey: result.recreatedKey,
           outlineKeyId: result.outlineKeyId,
           // Proof for the operator that the URL did not change.
+          dynamicUrl: record ? buildDynamicUrl(record.token, record.name) : null,
+          syncPending: result.syncPending,
+        });
+      }
+
+      // ── Repair missing physical key ───────────────────────────────────────
+      case "repair": {
+        const input = repairDynamicSchema.parse(body);
+        const result = await enableIdentity({ token: input.token, forceRecreate: true });
+        if (!result.ok) fail(result.code, result.message);
+
+        const record = await readDynamicRecord(input.token);
+        logger.warn(
+          { user: auth.username, dyn: maskId(input.token), recreated: result.recreatedKey },
+          "Missing Outline key repaired"
+        );
+        return successResponse({
+          ok: true,
+          recreatedKey: result.recreatedKey,
+          outlineKeyId: result.outlineKeyId,
           dynamicUrl: record ? buildDynamicUrl(record.token, record.name) : null,
           syncPending: result.syncPending,
         });

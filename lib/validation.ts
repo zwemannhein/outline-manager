@@ -121,6 +121,11 @@ export const enableDynamicSchema = z.object({
   serverId: z.string().min(1).optional().nullable(),
 });
 
+/** Admin: recreate a missing physical key while preserving the identity token. */
+export const repairDynamicSchema = z.object({
+  token: dynamicTokenSchema,
+});
+
 /** Admin: move a customer to a different Outline server. */
 export const migrateDynamicSchema = z.object({
   token: dynamicTokenSchema,

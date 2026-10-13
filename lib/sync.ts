@@ -384,6 +384,17 @@ export function enableCustomer(token: string, serverId?: string | null) {
   }>({ action: "enable", token, serverId: serverId ?? null });
 }
 
+/** Recreate a missing physical key without changing the permanent customer token. */
+export function repairCustomer(token: string) {
+  return dynamicAction<{
+    ok: boolean;
+    recreatedKey: boolean;
+    outlineKeyId: string;
+    dynamicUrl: string | null;
+    syncPending: boolean;
+  }>({ action: "repair", token });
+}
+
 export function resetCustomerUsage(token: string) {
   return dynamicAction<{
     ok: boolean;

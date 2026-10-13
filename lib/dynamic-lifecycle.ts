@@ -265,6 +265,8 @@ export interface EnableOptions {
   token: string;
   /** Destination when the underlying key must be recreated. */
   serverId?: string | null;
+  /** Repair an active identity whose physical Outline key has disappeared. */
+  forceRecreate?: boolean;
 }
 
 /**
@@ -285,7 +287,7 @@ export async function enableIdentity(
   if (record.status === "revoked") {
     return { ok: false, code: "REVOKED", message: "This identity has been revoked." };
   }
-  if (record.status === "active") {
+  if (record.status === "active" && !options.forceRecreate) {
     const sync = await syncDynamicToken(options.token, { force: true });
     return {
       ok: true,
@@ -296,6 +298,16 @@ export async function enableIdentity(
   }
 
   const meta = await readKeyMeta(record.serverId, record.outlineKeyId);
+
+  // A repair must have authoritative quota metadata so a replacement key can
+  // never accidentally be created without the customer's configured limit.
+  if (options.forceRecreate && record.status === "active" && !meta) {
+    return {
+      ok: false,
+      code: "NO_METADATA",
+      message: "Cannot repair this customer because subscription metadata is missing.",
+    };
+  }
 
   // Refuse to reactivate a subscription that is genuinely over: that is what
   // renewal is for, and silently granting another cycle would be a billing bug.

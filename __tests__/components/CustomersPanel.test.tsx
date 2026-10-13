@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   fetchDynamicCustomers: vi.fn(),
   resetCustomerUsage: vi.fn(),
   disableCustomer: vi.fn(),
+  repairCustomer: vi.fn(),
 }));
 
 vi.mock("@/lib/sync", () => ({
@@ -117,7 +118,8 @@ describe("customer usage reset UI", () => {
     render(<CustomersPanel servers={[{ id: "srv-a", name: "Server A" }]} />);
 
     expect(await screen.findByText("Missing key")).toBeInTheDocument();
-    expect(screen.getByText(/disable, then enable this customer/i)).toBeInTheDocument();
+    expect(screen.getByText(/physical outline key is missing/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /repair key/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^disable$/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /reset usage/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /migrate/i })).toBeDisabled();
