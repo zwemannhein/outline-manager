@@ -39,7 +39,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (32 files, 453 tests) |
+| Vitest | ^2.1.8 | Test runner (33 files, 454 tests) |
 
 ---
 
@@ -134,7 +134,7 @@ outline-manager/
 │   ├── wrangler.toml       ← Public config Worker; workers_dev = true
 │   └── wrangler.cron.toml  ← Private hourly trigger Worker; workers_dev = false
 │
-├── __tests__/           ← 32 standard test files, 453 tests (Vitest + jsdom)
+├── __tests__/           ← 33 standard test files, 454 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -402,7 +402,7 @@ Outline key, expiry, cycles, rev, or Cloudflare projection.
 
 ### Edit Subscription
 
-Single dialog edits both quota GB and expiry date together. Submits `editSubscription` action to `/api/v1/dynamic-keys/actions`. Past expiry → disables immediately (`disabledImmediately: true` in response).
+Single dialog edits both quota GB and expiry date together. The `1 month + 100 GB` quick plan sets a 100 GB per-cycle allowance and adds exactly 30 days to the current expiry (or starts 30 days from today when already expired/no expiry). Submits `editSubscription` action to `/api/v1/dynamic-keys/actions`. Past expiry → disables immediately (`disabledImmediately: true` in response).
 
 ### Renew Button
 
@@ -692,13 +692,13 @@ Vercel also runs the production build during deployment.
 - Customer status messaging now keeps subscription reasons primary (`Expired`, `Quota exhausted`, `Missing key`) and the Reset Usage dialog shows the configured allowance before confirmation.
 - Kept the explicit `/api/v1/auth/login/status` HTTP 410 tombstone so old clients receive a clear retired-flow response.
 - Replaced the build-time Google Fonts download with a local system font stack, so production builds do not depend on `fonts.googleapis.com` availability.
-- Verification: type-check PASS, 32 test files / 453 tests PASS, lint PASS, production build PASS.
+- Verification: type-check PASS, 33 test files / 454 tests PASS, lint PASS, production build PASS.
 
 Verified after the monitoring-correctness production follow-up (commit `0ba6505`).
 
 ```
 npm run type-check          → PASS (0 errors)
-npm run test                → PASS (32 files, 453 tests)
+npm run test                → PASS (33 files, 454 tests)
 npm run build               → PASS
 cd worker && npm run type-check → PASS
 ```
@@ -869,5 +869,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (32 files, ≥453 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (33 files, ≥454 tests)
 - [ ] **Build passes** — `npm run build` exits 0

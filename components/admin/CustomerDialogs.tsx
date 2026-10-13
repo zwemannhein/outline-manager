@@ -222,6 +222,17 @@ export function EditSubscriptionDialog({
     void onConfirm(quotaGB, expiryIso);
   }
 
+  function applyOneMonthPreset() {
+    const currentExpiry = customer?.expiryDate ? Date.parse(customer.expiryDate) : NaN;
+    const base = Number.isFinite(currentExpiry) && currentExpiry > Date.now()
+      ? new Date(currentExpiry)
+      : new Date();
+    base.setUTCDate(base.getUTCDate() + 30);
+    setUnlimited(false);
+    setGb(100);
+    setExpiry(base.toISOString().slice(0, 10));
+  }
+
   return (
     <Shell title="Edit subscription" icon={<Gauge className="w-5 h-5 text-white" />} onClose={onClose}>
       <div className="space-y-4">
@@ -257,6 +268,22 @@ export function EditSubscriptionDialog({
             </div>
           </div>
         )}
+
+        <div className="space-y-2">
+          <Label>Quick plan</Label>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full justify-between"
+            onClick={applyOneMonthPreset}
+          >
+            <span>1 month + 100 GB</span>
+            <span className="text-xs text-muted-foreground">30 days</span>
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Sets 100 GB per 30-day cycle and adds 30 days to the current expiry.
+          </p>
+        </div>
 
         {/* Expiry date */}
         <div className="space-y-2">
