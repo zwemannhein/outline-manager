@@ -1,39 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildLoginApprovalText, buildPasswordResetText } from "@/lib/telegram";
+import { buildPasswordResetText } from "@/lib/telegram";
 import { parseCallbackData } from "@/lib/telegram-callback";
 
 const USERNAME = "the-admin-user";
-
-describe("login approval message", () => {
-  const text = buildLoginApprovalText({
-    username: USERNAME,
-    browserSummary: "Chrome / macOS",
-    ip: "203.0.113.7",
-    requestedAt: new Date("2026-08-29T10:00:00Z"),
-  });
-
-  it("includes the admin username", () => {
-    expect(text).toContain(USERNAME);
-    expect(text).toContain("Username:");
-  });
-
-  it("includes time, browser and IP", () => {
-    expect(text).toContain("Time:");
-    expect(text).toContain("Chrome / macOS");
-    expect(text).toContain("203.0.113.7");
-  });
-
-  it("asks for a decision", () => {
-    expect(text).toContain("Admin Login Request");
-    expect(text).toContain("Approve this login?");
-  });
-
-  it("contains no credential or secret material", () => {
-    for (const forbidden of ["password", "jwt", "browserSecret", "secret", "token", "ss://", "certSha256", "apiUrl"]) {
-      expect(text.toLowerCase()).not.toContain(forbidden.toLowerCase());
-    }
-  });
-});
 
 describe("password reset message", () => {
   const CODE = "483921";
@@ -72,13 +41,7 @@ describe("password reset message", () => {
   });
 });
 
-describe("callback routing keeps order and login flows separate", () => {
-  it("parses login callbacks", () => {
-    const id = "a".repeat(32);
-    expect(parseCallbackData(`login_approve:${id}`)).toEqual({ kind: "login", action: "approve", id });
-    expect(parseCallbackData(`login_reject:${id}`)).toEqual({ kind: "login", action: "reject", id });
-  });
-
+describe("order callback routing", () => {
   it("parses current order callbacks", () => {
     expect(parseCallbackData("order_approve:ord_123_abc")).toEqual({
       kind: "order",
@@ -108,15 +71,11 @@ describe("callback routing keeps order and login flows separate", () => {
   it("rejects unknown, empty and id-less payloads", () => {
     expect(parseCallbackData("")).toEqual({ kind: "unknown" });
     expect(parseCallbackData("something_else:abc")).toEqual({ kind: "unknown" });
-    expect(parseCallbackData("login_approve:")).toEqual({ kind: "unknown" });
+    expect(parseCallbackData("login_approve:old-attempt")).toEqual({ kind: "unknown" });
     expect(parseCallbackData("approve_")).toEqual({ kind: "unknown" });
   });
 
   it("keeps callback_data inside Telegram's 64-byte limit", () => {
-    const attemptId = "f".repeat(32);
-    expect(Buffer.byteLength(`login_approve:${attemptId}`)).toBeLessThanOrEqual(64);
-    expect(Buffer.byteLength(`login_reject:${attemptId}`)).toBeLessThanOrEqual(64);
-
     const orderId = `ord_${Date.now()}_${"a".repeat(16)}`;
     expect(Buffer.byteLength(`order_approve:${orderId}`)).toBeLessThanOrEqual(64);
   });

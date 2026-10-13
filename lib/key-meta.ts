@@ -127,11 +127,6 @@ export async function patchKeyMeta(
   return writeKeyMeta(serverId, outlineKeyId, { ...existing, ...patch });
 }
 
-export async function deleteKeyMeta(serverId: string, outlineKeyId: string): Promise<void> {
-  const redis = getRedis();
-  await redis.hdel(KEY_META_HASH, metaField(serverId, outlineKeyId));
-}
-
 /** Move metadata to a different key, used when migration replaces the key. */
 export async function copyKeyMeta(
   from: { serverId: string; outlineKeyId: string },

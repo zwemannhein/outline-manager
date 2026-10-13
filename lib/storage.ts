@@ -3,7 +3,7 @@
  * localStorage is used as a synchronous cache.
  */
 
-import type { OutlineServer, KeyMeta } from "./types";
+import type { OutlineServer } from "./types";
 import { loadLocalData, saveLocalData, pushAdminData, AdminData } from "./sync";
 
 // ── Migration: move old localStorage keys into the new unified format ─────────
@@ -69,29 +69,4 @@ export function updateServerName(id: string, name: string): OutlineServer[] {
   );
   saveServers(updated);
   return updated;
-}
-
-// ─── Key metadata ─────────────────────────────────────────────────────────────
-
-function metaKey(serverId: string, keyId: string): string {
-  return `${serverId}:${keyId}`;
-}
-
-export function getKeyMeta(serverId: string, keyId: string): KeyMeta {
-  const map = loadLocalData().keyMeta;
-  return map[metaKey(serverId, keyId)] ?? { expiryDate: null };
-}
-
-export function setKeyMeta(serverId: string, keyId: string, meta: KeyMeta): void {
-  const data = loadLocalData();
-  data.keyMeta[metaKey(serverId, keyId)] = meta;
-  saveLocalData(data);
-  pushAdminData(data).catch(() => {});
-}
-
-export function deleteKeyMeta(serverId: string, keyId: string): void {
-  const data = loadLocalData();
-  delete data.keyMeta[metaKey(serverId, keyId)];
-  saveLocalData(data);
-  pushAdminData(data).catch(() => {});
 }

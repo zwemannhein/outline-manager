@@ -196,26 +196,3 @@ export interface DecodedSsKey {
   embeddedApiUrl?: string;
   embeddedCertSha256?: string;
 }
-
-export interface SsConfKey {
-  server: string;
-  server_port: number;
-  method: string;
-  password: string;
-  prefix?: string;
-}
-
-export type AppRole = "none" | "admin" | "user";
-
-export interface ProxyRequest {
-  apiUrl: string;
-  certSha256: string;
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  path: string;
-  body?: unknown;
-}
-
-export interface ProxyError {
-  error: string;
-  status?: number;
-}

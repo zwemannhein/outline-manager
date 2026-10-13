@@ -1,5 +1,5 @@
 /**
- * REAL-UPSTASH validation of the three authentication Lua scripts.
+ * REAL-UPSTASH validation of the password-reset Lua scripts.
  *
  * Purpose: unit tests transcribe the Lua into JavaScript to exercise the state
  * machines, which cannot catch a Lua syntax error, an `eval` argument-format
@@ -29,7 +29,6 @@ loadEnvConfig(process.cwd());
 
 import { getRedis } from "@/lib/api-utils";
 import { LUA_VERIFY_RESET_CODE, LUA_CONSUME_RESET_AND_SET_PASSWORD } from "@/lib/password-reset";
-import { LUA_TRANSITION_ATTEMPT } from "@/lib/login-attempts";
 
 // ── Isolation namespace ───────────────────────────────────────────────────────
 
@@ -114,22 +113,6 @@ async function makeResetRecord(
     codeHash: codeHashFor(FAKE_RESET_ID, CORRECT_CODE),
     expiresAtMs: futureMs(),
     attempts: "0",
-    username: "itest-user",
-    ...overrides,
-  });
-  await redis().expire(key, 600);
-  return key;
-}
-
-/** Create a throwaway login-attempt record. */
-async function makeAttemptRecord(
-  suffix: string,
-  overrides: Record<string, string> = {}
-): Promise<string> {
-  const key = testKey(suffix);
-  await redis().hset(key, {
-    state: "pending",
-    expiresAtMs: futureMs(),
     username: "itest-user",
     ...overrides,
   });
@@ -320,118 +303,7 @@ describe("REAL UPSTASH: LUA_VERIFY_RESET_CODE", () => {
   });
 });
 
-// ── 2. LUA_TRANSITION_ATTEMPT ─────────────────────────────────────────────────
-
-describe("REAL UPSTASH: LUA_TRANSITION_ATTEMPT", () => {
-  it("performs pending -> approved then approved -> consumed", async () => {
-    const key = await makeAttemptRecord("attempt-happy");
-
-    const approve = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-    expect(approve).toBe("ok");
-    await expect(redis().hget(key, "state")).resolves.toBe("approved");
-    await expect(redis().hget(key, "decidedAt")).resolves.toBeTruthy();
-
-    const consume = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["approved", "consumed", String(nowMs()), "consumedAt", iso()]
-    );
-    expect(consume).toBe("ok");
-    await expect(redis().hget(key, "state")).resolves.toBe("consumed");
-    await expect(redis().hget(key, "consumedAt")).resolves.toBeTruthy();
-  });
-
-  it("performs pending -> rejected", async () => {
-    const key = await makeAttemptRecord("attempt-reject");
-
-    const reject = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "rejected", String(nowMs()), "decidedAt", iso()]
-    );
-
-    expect(reject).toBe("ok");
-    await expect(redis().hget(key, "state")).resolves.toBe("rejected");
-  });
-
-  it("refuses approve after reject, leaving the state unchanged", async () => {
-    const key = await makeAttemptRecord("attempt-reject-then-approve");
-
-    await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "rejected", String(nowMs()), "decidedAt", iso()]
-    );
-
-    const approve = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-
-    // Returns the current state, and performs no write.
-    expect(approve).toBe("rejected");
-    await expect(redis().hget(key, "state")).resolves.toBe("rejected");
-  });
-
-  it("refuses the illegal pending -> consumed shortcut", async () => {
-    const key = await makeAttemptRecord("attempt-illegal");
-
-    const result = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["approved", "consumed", String(nowMs()), "consumedAt", iso()]
-    );
-
-    // Expected "approved" but found "pending": no transition, no JWT possible.
-    expect(result).toBe("pending");
-    await expect(redis().hget(key, "state")).resolves.toBe("pending");
-    await expect(redis().hget(key, "consumedAt")).resolves.toBeNull();
-  });
-
-  it("is idempotent under a repeated approve", async () => {
-    const key = await makeAttemptRecord("attempt-idempotent");
-
-    const first = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-    const second = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [key],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-
-    expect(first).toBe("ok");
-    expect(second).toBe("approved");
-  });
-
-  it("returns expired for a logically expired attempt, and missing when absent", async () => {
-    const expiredKey = await makeAttemptRecord("attempt-expired", { expiresAtMs: pastMs() });
-    const expired = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [expiredKey],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-    expect(expired).toBe("expired");
-    await expect(redis().hget(expiredKey, "state")).resolves.toBe("pending");
-
-    const absentKey = testKey("attempt-absent");
-    const missing = await runLua(
-      LUA_TRANSITION_ATTEMPT,
-      [absentKey],
-      ["pending", "approved", String(nowMs()), "decidedAt", iso()]
-    );
-    expect(missing).toBe("missing");
-  });
-});
-
-// ── 3. LUA_CONSUME_RESET_AND_SET_PASSWORD ─────────────────────────────────────
+// ── 2. LUA_CONSUME_RESET_AND_SET_PASSWORD ─────────────────────────────────────
 
 describe("REAL UPSTASH: LUA_CONSUME_RESET_AND_SET_PASSWORD", () => {
   // Fake, non-secret derived material. The real admin password is never involved.
@@ -546,7 +418,7 @@ describe("REAL UPSTASH: LUA_CONSUME_RESET_AND_SET_PASSWORD", () => {
   });
 });
 
-// ── 4. Guardrails themselves ──────────────────────────────────────────────────
+// ── 3. Guardrails themselves ──────────────────────────────────────────────────
 
 describe("integration guardrails", () => {
   it("refuses the real admin:auth key", () => {

@@ -1,6 +1,6 @@
 /**
  * Minimal in-memory Redis double covering the operations used by
- * lib/admin-auth.ts, lib/login-attempts.ts and lib/password-reset.ts.
+ * lib/admin-auth.ts and lib/password-reset.ts.
  *
  * Importantly it models HSETNX and HINCRBY faithfully, since the atomicity of
  * the login and reset state machines rests on those two commands.

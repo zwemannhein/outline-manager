@@ -39,7 +39,7 @@ Customers receive a stable token/path; the optional display-name fragment tracks
 | Vercel | Hobby | Hosting, cron (daily fallback), environment secrets |
 | Cloudflare Worker + KV | Free tier | Legacy/cache layer for `/k/` projection (NOT canonical) |
 | AWS Lightsail | External | Physical VPN server hosting (no API credentials configured) |
-| Vitest | ^2.1.8 | Test runner (34 files, 498 tests) |
+| Vitest | ^2.1.8 | Test runner (32 files, 452 tests) |
 
 ---
 
@@ -50,13 +50,12 @@ outline-manager/
 ├── app/
 │   ├── k/[token]/route.ts          ← CANONICAL /k/<token> JSON resolver (Vercel)
 │   ├── page.tsx                    ← Root page (login + admin dashboard shell)
-│   ├── layout.tsx                  ← HTML layout, font, providers
+│   ├── layout.tsx                  ← HTML layout and providers (system font stack; no build-time font download)
 │   └── api/
 │       ├── v1/
 │       │   ├── auth/
 │       │   │   ├── login/route.ts          ← Credentials → 24-hour JWT
-│       │   │   ├── login/status/route.ts   ← Legacy approval poll; returns 410
-│       │   │   ├── login/cancel/route.ts   ← Legacy approval cancellation endpoint
+│       │   │   ├── login/status/route.ts   ← Retired approval poll; returns 410
 │       │   │   ├── verify/route.ts         ← Verify current JWT and password provenance
 │       │   │   ├── change-password/route.ts
 │       │   │   ├── forgot-password/route.ts
@@ -99,7 +98,7 @@ outline-manager/
 │   ├── SettingsPanel.tsx      ← Telegram Approvers management
 │   ├── ChangePasswordDialog.tsx
 │   ├── FirstRunPasswordSetup.tsx
-│   ├── Dialogs.tsx            ← Shared dialogs (AddServer, RenameKey, SetLimit, etc.)
+│   ├── Dialogs.tsx            ← Add Server dialog
 │   (ServerDashboard.tsx and KeyTable.tsx were removed — raw key operations retired)
 │
 ├── lib/
@@ -112,21 +111,17 @@ outline-manager/
 │   ├── dynamic-url.ts        ← Build/parse ssconf:// URLs, token validation
 │   ├── key-meta.ts           ← Per-key quota/cycle metadata: read, write, compute usage
 │   ├── kv-sync.ts            ← Cloudflare KV projection: put, delete, dirty queue, drain
-│   ├── login-attempts.ts     ← Legacy challenge state machine (not used by active login)
-│   ├── monitoring.ts         ← Health checks, cron summary, legacy telemetry, due-job counts
+│   ├── monitoring.ts         ← Health checks, cron summary, due-job counts
 │   ├── order-approval.ts     ← Approve/reject orders, idempotent, orphan adoption
 │   ├── order-claim.ts        ← One-time claim tokens for customer order status lookup
 │   ├── outline-admin.ts      ← Server-side Outline API client (cert-pinned, Redis registry)
-│   ├── outline-client.ts     ← Browser-side Outline proxy client (via /api/outline)
-│   ├── outline-server.ts     ← Outline server registry helpers
 │   ├── password-reset.ts     ← Forgot-password: HMAC code generation, verification
-│   ├── polling.ts            ← Generic exponential-backoff polling utility
 │   ├── quota-cycles.ts       ← 30-day cycle rollover, expiry processing (cron workers)
 │   ├── server-migration.ts   ← Move customer to different Outline server (preserves token)
 │   ├── storage.ts            ← Browser localStorage helpers (server list, key meta legacy)
 │   ├── sync.ts               ← Browser API client (all fetch calls to v1 API, auth token mgmt)
 │   ├── telegram-approvers.ts ← Approver CRUD, link token create/consume, chatId lookup
-│   ├── telegram-callback.ts  ← Parse Telegram callback_data (order prefixes; legacy login prefix)
+│   ├── telegram-callback.ts  ← Parse Telegram order callback_data
 │   ├── telegram.ts           ← sendTelegramMessage, order approval, password reset, etc.
 │   ├── types.ts              ← Shared TypeScript types (OutlineServer, DynamicKeyRecord, etc.)
 │   ├── validation.ts         ← All Zod schemas + getEnv() environment validation
@@ -139,7 +134,7 @@ outline-manager/
 │   ├── wrangler.toml       ← Public config Worker; workers_dev = true
 │   └── wrangler.cron.toml  ← Private hourly trigger Worker; workers_dev = false
 │
-├── __tests__/           ← 34 standard test files, 498 tests (Vitest + jsdom)
+├── __tests__/           ← 32 standard test files, 452 tests (Vitest + jsdom)
 │   ├── components/      ← AdminLoginForm, FirstRunPasswordSetup
 │   ├── helpers/         ← FakeRedis, FakeOutline, outline-mock
 │   ├── integration/     ← Upstash live tests (opt-in, skipped in normal CI)
@@ -272,10 +267,9 @@ Two modes via `POST /api/v1/admin/customers`:
 3. All subsequent admin API calls include: Authorization: Bearer <jwt>
 ```
 
-The legacy `/api/v1/auth/login/status` endpoint returns HTTP 410 and cannot mint
-sessions from challenges created by older deployments. The login cancel endpoint
-and login-attempt helper remain only for compatibility; the current dashboard
-does not call them.
+The retired `/api/v1/auth/login/status` endpoint returns HTTP 410 and cannot mint
+sessions from challenges created by older deployments. The former challenge
+state machine and cancellation endpoint have been removed.
 
 ### Telegram Approver Linking
 
@@ -522,8 +516,8 @@ Never mutates anything.
 
 Not implemented. The UI always displays "Not configured" without failing. Adding AWS credentials alone does not enable collection.
 
-Historical login approval telemetry may remain in Redis, but is no longer
-updated or surfaced. It does not affect authentication.
+Historical login approval keys may remain in Redis until their TTL expires. No
+active code reads or writes them, and they do not affect authentication.
 
 ---
 
@@ -690,11 +684,19 @@ Vercel also runs the production build during deployment.
 
 ## Q. CURRENT PRODUCTION STATUS
 
+### Repository cleanup follow-up (2026-10-13)
+
+- Removed the retired Telegram-gated dashboard login state machine, cancel endpoint, delivery telemetry, and callback handling. Dashboard login remains username/password with rate limiting; Telegram order approval, approver linking, and password reset remain active.
+- Removed the unused raw Outline proxy/client/server helpers, polling helper, obsolete key-management dialogs, dormant renewal/quota dialogs, and unreferenced schemas/types/storage helpers.
+- Kept the explicit `/api/v1/auth/login/status` HTTP 410 tombstone so old clients receive a clear retired-flow response.
+- Replaced the build-time Google Fonts download with a local system font stack, so production builds do not depend on `fonts.googleapis.com` availability.
+- Verification: type-check PASS, 32 test files / 452 tests PASS, lint PASS, production build PASS.
+
 Verified after the monitoring-correctness production follow-up (commit `0ba6505`).
 
 ```
 npm run type-check          → PASS (0 errors)
-npm run test                → PASS (34 files, 498 tests)
+npm run test                → PASS (32 files, 452 tests)
 npm run build               → PASS
 cd worker && npm run type-check → PASS
 ```
@@ -865,5 +867,5 @@ Before shipping any change, verify none of these are broken:
 - [ ] **Token permanence** — same ssconf URL survives quota/expiry/disable/enable/migrate
 - [ ] **Unlimited = no Outline limit** — not 0 bytes, literally no data limit set
 - [ ] **Type-check passes** — `npm run type-check` exits 0
-- [ ] **Tests pass** — `npm run test` exits 0 (34 files, ≥498 tests)
+- [ ] **Tests pass** — `npm run test` exits 0 (32 files, ≥452 tests)
 - [ ] **Build passes** — `npm run build` exits 0

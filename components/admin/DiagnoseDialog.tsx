@@ -4,7 +4,7 @@
  * Customer Diagnose dialog — read-only diagnostic view.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { X, CheckCircle2, XCircle, AlertTriangle, HelpCircle, RefreshCw, Stethoscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { diagnoseCustomer, type DiagnoseResult, type DiagCheckState } from "@/lib/sync";
@@ -42,7 +42,7 @@ export function DiagnoseDialog({ token, name, onClose }: DiagnoseDialogProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function run() {
+  const run = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -53,9 +53,9 @@ export function DiagnoseDialog({ token, name, onClose }: DiagnoseDialogProps) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [token]);
 
-  useEffect(() => { void run(); }, [token]);
+  useEffect(() => { void run(); }, [run]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">

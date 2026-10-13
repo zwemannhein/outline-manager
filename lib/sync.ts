@@ -32,24 +32,13 @@ function getAuthToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function getUsername(): string | null {
-  if (typeof window === "undefined") return null;
-  return sessionStorage.getItem(USERNAME_KEY);
-}
-
-export function hasAuthToken(): boolean {
-  if (typeof window === "undefined") return false;
-  return !!sessionStorage.getItem(TOKEN_KEY);
-}
-
 function makeAuthHeader(): string {
   const token = getAuthToken();
   return token ? `Bearer ${token}` : "";
 }
 
 /**
- * Public accessor for the admin Authorization header.
- * Used by lib/outline-client.ts so that /api/outline calls are authenticated.
+ * Public accessor for authenticated admin API requests.
  * Returns an empty string when no admin session exists.
  */
 export function getAuthHeader(): string {
@@ -393,22 +382,6 @@ export function enableCustomer(token: string, serverId?: string | null) {
     dynamicUrl: string | null;
     syncPending: boolean;
   }>({ action: "enable", token, serverId: serverId ?? null });
-}
-
-export function renewCustomer(token: string, additionalCycles: number) {
-  return dynamicAction<{ ok: boolean; expiryDate: string | null; cyclesTotal: number }>({
-    action: "renew",
-    token,
-    additionalCycles,
-  });
-}
-
-export function updateCustomerQuota(token: string, quotaGB: number | null) {
-  return dynamicAction<{ ok: boolean; quotaBytes: number | null; urlChanged: boolean }>({
-    action: "updateQuota",
-    token,
-    quotaGB,
-  });
 }
 
 export function resetCustomerUsage(token: string) {

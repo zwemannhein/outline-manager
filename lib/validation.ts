@@ -62,23 +62,11 @@ export type LoginInput = z.infer<typeof loginSchema>;
 /** Minimum admin password length, shared by change-password and reset. */
 export const MIN_ADMIN_PASSWORD_LENGTH = 8;
 
-const attemptIdSchema = z
-  .string()
-  .regex(/^[0-9a-f]{32}$/, "Invalid attempt id");
-const browserSecretSchema = z
-  .string()
-  .regex(/^[0-9a-f]{64}$/, "Invalid browser secret");
 const resetIdSchema = z.string().regex(/^[0-9a-f]{32}$/, "Invalid reset id");
 const newPasswordSchema = z
   .string()
   .min(MIN_ADMIN_PASSWORD_LENGTH, `Password must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`)
   .max(200, "Password too long");
-
-/** Legacy payload schema retained for the retired login-approval endpoints. */
-export const loginAttemptSchema = z.object({
-  attemptId: attemptIdSchema,
-  browserSecret: browserSecretSchema,
-});
 
 /** Authenticated dashboard password change. */
 export const changePasswordSchema = z.object({
@@ -161,12 +149,6 @@ export const updateQuotaSchema = z.object({
   quotaGB: z.number().min(0).max(100000).nullable(),
 });
 
-export const keyMetaPatchSchema = z.object({
-  expiryDate: z.string().datetime().nullable().optional(),
-  quotaBytes: z.number().int().min(0).nullable().optional(),
-  cyclesTotal: z.number().int().min(1).max(60).optional(),
-});
-
 export const backfillSchema = z.object({
   dryRun: z.boolean().optional(),
   /** Bound the work per invocation so a run cannot exhaust the KV write budget. */
@@ -180,20 +162,6 @@ export const backfillSchema = z.object({
  */
 export const bootstrapPasswordSchema = z.object({
   newPassword: newPasswordSchema,
-});
-
-// ── Key management validation ─────────────────────────────────────────────────
-
-export const createKeySchema = z.object({
-  name: z.string().min(1).max(100),
-});
-
-export const setDataLimitSchema = z.object({
-  bytes: z.number().int().positive().nullable(),
-});
-
-export const setExpirySchema = z.object({
-  expiryDate: z.string().datetime().nullable(),
 });
 
 // ── Environment validation ────────────────────────────────────────────────────

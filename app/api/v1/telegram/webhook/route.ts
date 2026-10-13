@@ -3,7 +3,7 @@
  *
  * Single webhook for:
  *   1. /start <link-token>   — Telegram approver linking
- *   2. callback_query        — order approve/reject (legacy login decisions are inert)
+ *   2. callback_query        — order approve/reject
  *
  * SECURITY MODEL
  *  1. X-Telegram-Bot-Api-Secret-Token is verified against TELEGRAM_WEBHOOK_SECRET
@@ -171,13 +171,6 @@ export async function POST(req: NextRequest) {
 
     const parsed = parseCallbackData(callback_query.data);
 
-    if (parsed.kind === "login") {
-      return await handleLoginCallback({
-        botToken,
-        callbackId: callback_query.id,
-      });
-    }
-
     if (parsed.kind === "unknown") {
       await answerCallback(botToken, callback_query.id, "⚠️ Unknown action");
       return NextResponse.json({ ok: false });
@@ -268,17 +261,6 @@ async function handleStartLink(ctx: {
 
   logger.info("Telegram approver linked via private /start flow");
 
-  return NextResponse.json({ ok: true });
-}
-
-// ── Legacy admin login callback ───────────────────────────────────────────────
-
-async function handleLoginCallback(ctx: {
-  botToken: string;
-  callbackId: string;
-}): Promise<NextResponse> {
-  const { botToken, callbackId } = ctx;
-  await answerCallback(botToken, callbackId, "Admin login no longer needs Telegram approval.");
   return NextResponse.json({ ok: true });
 }
 

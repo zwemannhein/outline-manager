@@ -210,23 +210,9 @@ export async function listApprovers(): Promise<TelegramApprover[]> {
   return approvers.sort((a, b) => a.linkedAt.localeCompare(b.linkedAt));
 }
 
-/** Get a single approver by userId. */
-export async function getApprover(userId: string): Promise<TelegramApprover | null> {
-  const redis = getRedis();
-  const raw = await redis.hgetall<Record<string, string>>(approverKey(userId));
-  if (!raw || !raw.userId) return null;
-  return {
-    userId: raw.userId,
-    chatId: raw.chatId ?? raw.userId,
-    username: raw.username ?? "",
-    linkedAt: raw.linkedAt ?? "",
-    status: "linked",
-  };
-}
-
 /**
  * Return the chatIds of all active linked approvers.
- * Used by the login route to know where to send approval requests.
+ * Used by tests and notification fan-out helpers.
  */
 export async function getApproverChatIds(): Promise<string[]> {
   const approvers = await listApprovers();

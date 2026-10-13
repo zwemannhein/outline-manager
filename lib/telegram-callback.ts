@@ -4,20 +4,17 @@
  * Lives outside the route file because Next.js route modules may only export
  * recognised HTTP handlers and route config, not helper functions.
  *
- * A single Telegram bot supports only one webhook URL, so order callbacks and
- * legacy login callbacks share /api/v1/telegram/webhook. Login callbacks are
- * acknowledged as inactive and never authorize a dashboard session.
+ * A single Telegram bot supports only one webhook URL, so all order callbacks
+ * share /api/v1/telegram/webhook.
  */
 
 export type CallbackAction =
   | { kind: "order"; action: "approve" | "reject"; id: string }
-  | { kind: "login"; action: "approve" | "reject"; id: string }
   | { kind: "unknown" };
 
 /**
  * Supported formats:
  *   order_approve:<orderId>    order_reject:<orderId>     (current)
- *   login_approve:<attemptId>  login_reject:<attemptId>   (legacy, inactive)
  *   approve_<orderId>          reject_<orderId>           (legacy)
  *
  * The legacy underscore format is still accepted because approve/reject buttons
@@ -39,10 +36,6 @@ export function parseCallbackData(data: string): CallbackAction {
         return { kind: "order", action: "approve", id };
       case "order_reject":
         return { kind: "order", action: "reject", id };
-      case "login_approve":
-        return { kind: "login", action: "approve", id };
-      case "login_reject":
-        return { kind: "login", action: "reject", id };
       default:
         return { kind: "unknown" };
     }

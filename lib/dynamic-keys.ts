@@ -445,16 +445,6 @@ export async function repointDynamicIdentity(
   return { ok: false, reason: "missing" };
 }
 
-/** Update the display name. Does NOT bump rev: the name is not in the projection. */
-export async function setDynamicName(token: string, name: string): Promise<void> {
-  if (!isValidDynamicToken(token)) return;
-  const redis = getRedis();
-  await redis.hset(dynamicKey(token), {
-    name,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
 /** Mark a history entry for the given key as cleaned up. */
 export async function markHistoryCleanedUp(
   token: string,

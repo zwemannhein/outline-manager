@@ -15,13 +15,6 @@ export function formatBytes(bytes: number, decimals = 2): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-/** Parse a data limit string like "500 MB" or "2 GB" into bytes */
-export function parseDataLimit(value: string, unit: "MB" | "GB"): number {
-  const num = parseFloat(value);
-  if (isNaN(num) || num <= 0) throw new Error("Invalid data limit value");
-  return unit === "GB" ? num * 1024 ** 3 : num * 1024 ** 2;
-}
-
 /** Generate a simple UUID v4 */
 export function uuid(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {

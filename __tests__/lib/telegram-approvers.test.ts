@@ -10,13 +10,10 @@
  * G. username mismatch rejected
  * H. verified numeric telegramUserId stored
  * I. multiple Telegram approvers can be linked
- * J. login route sends to ALL active linked approvers
- * K. first Approve wins
- * L. first Reject wins
- * M. second callback returns already-handled
- * N. removed approver cannot approve future requests
- * O. username alone cannot authorise
- * P. existing single-admin password/reset behaviour still works
+ * J. order notifications target ALL active linked approvers
+ * K. removed approvers cannot approve future orders
+ * L. username alone cannot authorise
+ * M. existing single-admin password/reset behaviour still works
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -37,11 +34,6 @@ import {
   isPrivateTelegramBinding,
   LINK_TTL_SECONDS,
 } from "@/lib/telegram-approvers";
-import {
-  createLoginAttempt,
-  approveLoginAttempt,
-  rejectLoginAttempt,
-} from "@/lib/login-attempts";
 import {
   verifyAdminCredentials,
   deriveNewPasswordMaterial,
@@ -250,9 +242,9 @@ describe("I. multiple Telegram approvers", () => {
   });
 });
 
-// ── J. Login request goes to ALL active linked approvers ─────────────────────
+// ── J. Order notifications go to ALL active linked approvers ─────────────────
 
-describe("J. login request targets all linked approvers", () => {
+describe("J. order notifications target all linked approvers", () => {
   beforeEach(() => fakeRedis.reset());
 
   it("getApproverChatIds returns every linked chatId for fan-out", async () => {
@@ -266,73 +258,7 @@ describe("J. login request targets all linked approvers", () => {
   });
 });
 
-// ── K. First Approve wins ─────────────────────────────────────────────────────
-
-describe("K. first Approve wins", () => {
-  beforeEach(() => fakeRedis.reset());
-
-  it("first approver succeeds; second gets already_decided", async () => {
-    const attempt = await createLoginAttempt({
-      username: "admin", ip: "1.2.3.4", userAgent: "UA",
-    });
-
-    const first = await approveLoginAttempt(attempt.attemptId);
-    expect(first.ok).toBe(true);
-
-    const second = await approveLoginAttempt(attempt.attemptId);
-    expect(second.ok).toBe(false);
-    expect((second as { reason: string }).reason).toBe("already_decided");
-  });
-});
-
-// ── L. First Reject wins ──────────────────────────────────────────────────────
-
-describe("L. first Reject wins", () => {
-  beforeEach(() => fakeRedis.reset());
-
-  it("first rejector succeeds; second gets already_decided", async () => {
-    const attempt = await createLoginAttempt({
-      username: "admin", ip: "1.2.3.4", userAgent: "UA",
-    });
-
-    const first = await rejectLoginAttempt(attempt.attemptId);
-    expect(first.ok).toBe(true);
-
-    const second = await rejectLoginAttempt(attempt.attemptId);
-    expect(second.ok).toBe(false);
-    expect((second as { reason: string }).reason).toBe("already_decided");
-  });
-});
-
-// ── M. Second callback returns already-handled ────────────────────────────────
-
-describe("M. second callback already handled", () => {
-  beforeEach(() => fakeRedis.reset());
-
-  it("approve after reject is already_decided", async () => {
-    const attempt = await createLoginAttempt({
-      username: "admin", ip: "1.2.3.4", userAgent: "UA",
-    });
-
-    await rejectLoginAttempt(attempt.attemptId);
-    const late = await approveLoginAttempt(attempt.attemptId);
-    expect(late.ok).toBe(false);
-    expect((late as { reason: string }).reason).toBe("already_decided");
-  });
-
-  it("reject after approve is already_decided", async () => {
-    const attempt = await createLoginAttempt({
-      username: "admin", ip: "1.2.3.4", userAgent: "UA",
-    });
-
-    await approveLoginAttempt(attempt.attemptId);
-    const late = await rejectLoginAttempt(attempt.attemptId);
-    expect(late.ok).toBe(false);
-    expect((late as { reason: string }).reason).toBe("already_decided");
-  });
-});
-
-// ── N. Removed approver cannot approve future requests ────────────────────────
+// ── K. Removed approver cannot approve future orders ─────────────────────────
 
 describe("N. removed approver excluded", () => {
   beforeEach(() => fakeRedis.reset());

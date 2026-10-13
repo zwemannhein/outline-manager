@@ -312,8 +312,7 @@ outline-vpn-manager/
 ├── lib/
 │   ├── api-utils.ts     # Shared API utilities
 │   ├── logger.ts        # Structured logging
-│   ├── outline-client.ts # Outline API client
-│   ├── polling.ts       # Exponential backoff
+│   ├── outline-admin.ts # Server-side Outline Management API client
 │   ├── ss-decoder.ts    # Shadowsocks URL parser
 │   ├── storage.ts       # Local storage helpers
 │   ├── sync.ts          # Server sync
